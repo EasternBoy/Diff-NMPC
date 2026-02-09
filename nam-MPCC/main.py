@@ -15,7 +15,7 @@ import time
 from scipy.spatial import KDTree
 
 
-data = pd.read_csv("nam-MPCC/waypoints.csv")
+data = pd.read_csv("waypoints.csv")
 df = data[["theta", "X", "Y"]].copy()
 df = df.sort_values("theta")
 df = df.groupby("theta", as_index=False).mean()
@@ -95,7 +95,7 @@ class MPCConfigDYN:
     Rdk_ca: list = field(
         default_factory=lambda: np.diag([0.001, 3.0, 0.1]))  # input difference cost matrix, penalty for change of inputs - [accel, steering_speed, vi_speed]
 
-    q_contour: float = 400.0
+    q_contour: float = 100.0
     q_lag: float     = 200.0
     q_theta: float   = 2.0
 
@@ -114,23 +114,23 @@ class MPCConfigDYN:
     LR: float = 1.50876
     LF: float = 0.88392
     WB: float = 0.88392 + 1.50876  # Wheelbase [m]  
-    MAX_THETA: float = 500.0  # maximum a virtual theta for MPCC
+    MAX_THETA: float = np.inf  # maximum a virtual theta for MPCC
     MIN_THETA: float = 0.0  # minimum a virtual theta for MPCC
-    MAX_VI: float = 30.0 # maximum a virtual control input vi for MPCC
-    MIN_VI: float = 2.0 # minimum a virtual control input vi for MPCC
+    MAX_VI: float = 50.0 # maximum a virtual control input vi for MPCC
+    MIN_VI: float = 0.0 # minimum a virtual control input vi for MPCC
     MIN_STEER: float = -0.4189  # maximum steering angle [rad]
     MAX_STEER: float = 0.4189  # maximum ste
-    MAX_ACCEL: float = 11.5  # maximum acceleration [m/ss]
+    MAX_ACCEL: float = 50.5  # maximum acceleration [m/ss]
     MAX_DECEL: float = -45.0  # maximum acceleration [m/ss]ering angle [rad]
     MAX_STEER_V: float = 3.2  # maximum steering speed [rad/s]
-    MAX_SPEED: float = 8.0  # maximum speed [m/s]
-    MIN_SPEED: float = 3.0  # minimum backward speed [m/s]
-    MIN_POS_X: float = -200  # minimum horizontal direction (x) 
-    MAX_POS_X: float = 200  # maximum horizontal direction (x) 
-    MIN_POS_Y: float = -200  # minimum vertical direction (y) 
-    MAX_POS_Y: float = 200  # maximum vertical direction (y) 
-    MIN_SPEED_LAT: float = -2  # minimum latteral speed (m/s)
-    MAX_SPEED_LAT: float = 2 # maximum latteral speed (m/s)
+    MAX_SPEED: float = 50.0  # maximum speed [m/s]
+    MIN_SPEED: float = 2.0  # minimum backward speed [m/s]
+    MIN_POS_X: float = -np.inf  # minimum horizontal direction (x) 
+    MAX_POS_X: float = np.inf  # maximum horizontal direction (x) 
+    MIN_POS_Y: float = -np.inf  # minimum vertical direction (y) 
+    MAX_POS_Y: float = np.inf  # maximum vertical direction (y) 
+    MIN_SPEED_LAT: float = -np.inf  # minimum latteral speed (m/s)
+    MAX_SPEED_LAT: float = np.inf # maximum latteral speed (m/s)
 
     # model parameters
     MASS: float = 1225.887  # Vehicle mass
@@ -152,8 +152,8 @@ class STMPCCPlannerCasadi:
         self.track_length = float(theta_max - theta_min)
         self.theta_index = self.config.NXK - 1
         
-        self.input_o = np.zeros(self.config.NU) * np.nan  # NU = 2 (accel, steering)
-        self.states_output = np.ones((self.config.NXK, self.config.TK + 1)) * np.nan
+        self.input_o = np.zeros(self.config.NU) * np.NAN  # NU = 2 (accel, steering)
+        self.states_output = np.ones((self.config.NXK, self.config.TK + 1)) * np.NaN
         
         self.q_contour = self.config.q_contour      # Contouring error weight
         self.q_lag = self.config.q_lag              # Lag error weight  
@@ -212,7 +212,7 @@ class STMPCCPlannerCasadi:
             steering    )
         
     def predictive_model(self, state, control_input, param):
-        # OPTION B: state = [x, y, vx, yaw, vy, yaw_rate, steering_angle] (7 elements, NO theta)
+        # state = [x, y, vx, yaw, vy, yaw_rate, steering_angle] (7 elements, NO theta)
         # control_input = [Fxr, delta_v]
         # Param is a CasADi vector; use indexing instead of unpacking (not iterable).
         # Order expected: [BR, CR, DR, BF, CF, DF, CM]
@@ -276,8 +276,63 @@ class STMPCCPlannerCasadi:
         k4 = self.predictive_model(x + dt * k3, u, param)
         x_next = x + (dt/6.0) * (k1 + 2*k2 + 2*k3 + k4)
         return x_next
+
+    def get_initial_guess(self, x0, param, theta0):
+        """
+        Build a rollout-based initial guess consistent with dynamics and theta progression.
+        """
+        # Allocate arrays
+        states = np.zeros((self.config.NXK, self.config.TK + 1), dtype=float)
+        controls = np.zeros((self.config.NU, self.config.TK), dtype=float)
+        theta_arr = np.zeros(self.config.TK + 1, dtype=float)
+        vi_arr = np.zeros(self.config.TK, dtype=float)
+
+        # Initial state
+        states[:, 0] = x0
+        theta_arr[0] = theta0
+
+        # Rollout with zero inputs
+        for t in range(self.config.TK):
+            u_t = np.array([0.0, 0.0], dtype=float)
+            controls[:, t] = u_t
+            x_next = self.rk4_step(states[:, t], u_t, param)
+            states[:, t + 1] = np.array(x_next).astype(float).flatten()
+
+        # Compute theta from path lookup and unwrap for continuity
+        theta_lookup = np.zeros(self.config.TK + 1, dtype=float)
+
+        for t in range(self.config.TK + 1):
+            theta_lookup[t] = self.look_theta.query(states[0, t], states[1, t], k_neighbors=5)
+
+        theta_unwrap = np.zeros_like(theta_lookup)
+        theta_unwrap[0] = theta_lookup[0]
+        for t in range(1, self.config.TK + 1):
+            prev = theta_unwrap[t - 1]
+            cand = theta_lookup[t]
+            # Adjust by multiples of track length to minimize jump
+            delta = cand - prev
+            delta_wrapped = (delta + 0.5 * self.track_length) % self.track_length - 0.5 * self.track_length
+            theta_unwrap[t] = prev + delta_wrapped
+
+        theta_arr[:] = theta_unwrap
+        for t in range(self.config.TK):
+            vi_arr[t] = (theta_arr[t + 1] - theta_arr[t]) / self.DTK
+
+        # Pack into decision vector
+        x0_opt = np.zeros(self.n_states + self.n_controls + self.n_theta + self.n_vi, dtype=float)
+        idx = 0
+        x0_opt[idx:idx + self.n_states] = states.T.reshape(-1)
+        idx += self.n_states
+        x0_opt[idx:idx + self.n_controls] = controls.T.reshape(-1)
+        idx += self.n_controls
+        x0_opt[idx:idx + self.n_theta] = theta_arr
+        idx += self.n_theta
+        x0_opt[idx:idx + self.n_vi] = vi_arr
+
+        return x0_opt
     
     def mpc_prob_init(self):
+        self.x0_opt = None
         self.xk = ca.MX.sym('xk', self.config.NXK, self.config.TK + 1)  # NXK = 7 (no theta)
         self.uk = ca.MX.sym('uk', self.config.NU, self.config.TK)        # NU = 2
         self.theta_k = ca.MX.sym('theta_k', self.config.TK + 1)          # Theta as separate variable
@@ -393,7 +448,7 @@ class STMPCCPlannerCasadi:
 
         opts = {
         'ipopt.print_level': 0,
-        'ipopt.max_iter': 1000,  # Reduce iterations
+        'ipopt.max_iter': 500,  # Reduce iterations
         'ipopt.tol': 1e-2,  # Relax tolerance
         # 'ipopt.acceptable_tol': 1e-2,
         # 'ipopt.acceptable_obj_change_tol': 1e-3,
@@ -458,7 +513,7 @@ class STMPCCPlannerCasadi:
         self.lbg = lbg
         self.ubg = ubg
         # Initial guess
-        self.x0_opt = np.zeros(self.n_states + self.n_controls + self.n_theta + self.n_vi)
+        self.x0_opt = None
 
     def mpc_prob_solve(self, x0, u_his, param):
         """
@@ -469,12 +524,12 @@ class STMPCCPlannerCasadi:
         # Get current theta from vehicle position
         print("initial states:", x0)
         print("self.look_theta.query(x0[0], x0[1], k_neighbors=5)")
-        theta_0 = self.look_theta.query(x0[0], x0[1], k_neighbors=5)
+        theta_0 = self.look_theta.query(x0[0], x0[1], k_neighbors=10)
 
         # Ensure yaw continuity with previous warm-start solution.
         # Without this, a simulator wrap (e.g. 3.14 → -3.14) makes the
         # warm start inconsistent and the solver may diverge.
-        if np.any(self.x0_opt != 0):
+        if self.x0_opt is not None and np.any(self.x0_opt != 0):
             prev_yaw = self.x0_opt[3]  # yaw of first state in previous solution
             diff = x0[3] - prev_yaw
             x0[3] -= np.round(diff / (2.0 * np.pi)) * 2.0 * np.pi
@@ -485,6 +540,10 @@ class STMPCCPlannerCasadi:
             [theta_0],
             param
         ])
+
+        # Build a rollout-based initial guess using current parameters
+        if self.x0_opt is None or np.any(np.isnan(self.x0_opt)):
+            self.x0_opt = self.get_initial_guess(x0, param, theta_0)
         
         try:
             sol = self.solver(
@@ -565,9 +624,9 @@ if __name__ == '__main__':
     start_point = 1  # index on the trajectory to start from
     dyn_config = MPCConfigDYN()
 
-    map_file     = 'nam-MPCC/rounded_rectangle_waypoints.csv'
-    tpamap_name  = 'nam-MPCC/rounded_rectangle_tpamap.csv'
-    tpadata_name = 'nam-MPCC/rounded_rectangle_tpadata.json'
+    map_file = 'rounded_rectangle_waypoints.csv'
+    tpamap_name = 'rounded_rectangle_tpamap.csv'
+    tpadata_name = 'rounded_rectangle_tpadata.json'
 
     tpamap = np.loadtxt(tpamap_name, delimiter=';', skiprows=1)
 
@@ -578,8 +637,9 @@ if __name__ == '__main__':
     raceline = np.loadtxt(map_file, delimiter=";", skiprows=3)
     waypoints = np.array(raceline)
 
-    ini_vehicle_state = np.array([[waypoints[start_point, 1], waypoints[start_point, 2], 
-                                   (waypoints[start_point, 3]+ np.pi) % (2*np.pi) - np.pi, 0.0, 7.0, 0.0, 0.0]])
+    # Initialize with velocity with 4.0 <= <= 8.0 (or must increase the interation in the interation in the solver)
+    ini_vehicle_state = np.array([[waypoints[start_point, 1], waypoints[start_point, 2], 8.0, 0.0 , 0.0, 0.0, 
+                                   0.0]])
     planner_dyn_mpc = STMPCCPlannerCasadi(waypoints=waypoints,config=dyn_config, index=start_point, x0_opt_prev=ini_vehicle_state)
 
     BR = 15.9504
@@ -595,3 +655,4 @@ if __name__ == '__main__':
     u, _, _, _, _ = planner_dyn_mpc.plan(np.squeeze(ini_vehicle_state), param)
     u[0] = u[0] / planner_dyn_mpc.config.MASS  # Force to acceleration
     print("optimal control input:", u[0])
+
