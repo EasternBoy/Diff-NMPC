@@ -343,14 +343,47 @@ class STMPCCPlannerCasadi:
         self.theta0 = ca.MX.sym('theta0')  # Initial theta
         self.param = ca.MX.sym('param', self.config.num_param)
 
-        # CasADi interpolants for symbolic evaluation of the reference
-        theta_grid = theta
-        x_grid = x
-        y_grid = y
+        # CasADi interpolants for symbolic evaluation of the reference (periodic extension)
+        theta_grid = np.array(theta, dtype=float)
+        x_grid = np.array(x, dtype=float)
+        y_grid = np.array(y, dtype=float)
         phi_grid = np.unwrap(np.array([lookup_phi(t) for t in theta_grid]))
-        self.ref_x_fun = ca.interpolant('ref_x_fun', 'bspline', [theta_grid], x_grid)
-        self.ref_y_fun = ca.interpolant('ref_y_fun', 'bspline', [theta_grid], y_grid)
-        self.ref_phi_fun = ca.interpolant('ref_phi_fun', 'bspline', [theta_grid], phi_grid)
+
+        # Sort by theta
+        order = np.argsort(theta_grid)
+        theta_grid = theta_grid[order]
+        x_grid = x_grid[order]
+        y_grid = y_grid[order]
+        phi_grid = phi_grid[order]
+
+        # Remove duplicates (strictly increasing required)
+        mask = np.ones_like(theta_grid, dtype=bool)
+        mask[1:] = theta_grid[1:] > theta_grid[:-1]
+        theta_grid = theta_grid[mask]
+        x_grid = x_grid[mask]
+        y_grid = y_grid[mask]
+        phi_grid = phi_grid[mask]
+
+        L = float(self.track_length)
+
+        # If the grid includes both endpoints of a full loop, drop the last point
+        # to keep strict monotonicity after periodic extension.
+        span = theta_grid[-1] - theta_grid[0]
+        if np.isclose(span, L, rtol=0.0, atol=1e-8 * max(1.0, L)):
+            theta_grid = theta_grid[:-1]
+            x_grid = x_grid[:-1]
+            y_grid = y_grid[:-1]
+            phi_grid = phi_grid[:-1]
+
+        # Periodic extension
+        theta_ext = np.concatenate([theta_grid - L, theta_grid, theta_grid + L])
+        x_ext = np.concatenate([x_grid, x_grid, x_grid])
+        y_ext = np.concatenate([y_grid, y_grid, y_grid])
+        phi_ext = np.concatenate([phi_grid - 2.0 * np.pi, phi_grid, phi_grid + 2.0 * np.pi])
+
+        self.ref_x_fun = ca.interpolant('ref_x_fun', 'bspline', [theta_ext], x_ext)
+        self.ref_y_fun = ca.interpolant('ref_y_fun', 'bspline', [theta_ext], y_ext)
+        self.ref_phi_fun = ca.interpolant('ref_phi_fun', 'bspline', [theta_ext], phi_ext)
 
         objective = 0.0
         constraints = []
