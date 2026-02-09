@@ -15,7 +15,7 @@ import time
 from scipy.spatial import KDTree
 
 
-data = pd.read_csv("waypoints.csv")
+data = pd.read_csv("nam-MPCC/waypoints.csv")
 df = data[["theta", "X", "Y"]].copy()
 df = df.sort_values("theta")
 df = df.groupby("theta", as_index=False).mean()
@@ -565,9 +565,9 @@ if __name__ == '__main__':
     start_point = 1  # index on the trajectory to start from
     dyn_config = MPCConfigDYN()
 
-    map_file     = 'rounded_rectangle_waypoints.csv'
-    tpamap_name  = 'rounded_rectangle_tpamap.csv'
-    tpadata_name = 'rounded_rectangle_tpadata.json'
+    map_file     = 'nam-MPCC/rounded_rectangle_waypoints.csv'
+    tpamap_name  = 'nam-MPCC/rounded_rectangle_tpamap.csv'
+    tpadata_name = 'nam-MPCC/rounded_rectangle_tpadata.json'
 
     tpamap = np.loadtxt(tpamap_name, delimiter=';', skiprows=1)
 
