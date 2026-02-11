@@ -12,6 +12,7 @@ import json
 import pandas as pd
 from scipy.spatial import KDTree
 import jax.numpy as jnp
+import time
 
 data = pd.read_csv("data/waypoints.csv")
 df = data[["theta", "X", "Y"]].copy()
@@ -141,7 +142,7 @@ class MPCConfigDYN:
 
 
 class STMPCCPlannerCasadi:
-    def __init__(self, config, waypoints=None, index=None, x0_opt_prev=None):
+    def __init__(self, config, waypoints=None, x0_opt_prev=None):
         self.waypoints = waypoints
         self.config = config    
         self.look_theta = ThetaLookupTable(spline_x, spline_y, theta_min, theta_max, n_samples=1000000)
@@ -154,19 +155,18 @@ class STMPCCPlannerCasadi:
         self.states_output = np.ones((self.config.NXK, self.config.TK + 1)) * np.nan
         
         self.q_contour = self.config.q_contour      # Contouring error weight
-        self.q_lag = self.config.q_lag              # Lag error weight  
-        self.q_theta = self.config.q_theta          # Progress maximization (negative = reward)
+        self.q_lag     = self.config.q_lag              # Lag error weight  
+        self.q_theta   = self.config.q_theta          # Progress maximization (negative = reward)
         
-        self.DTK = self.config.DTK
+        self.DTK  = self.config.DTK
         self.MASS = self.config.MASS
-        self.I_Z = self.config.I_Z
-        self.LF = self.config.LF
-        self.LR = self.config.LR
+        self.I_Z  = self.config.I_Z
+        self.LF   = self.config.LF
+        self.LR   = self.config.LR
         self.TORQUE_SPLIT = self.config.TORQUE_SPLIT
 
-        self.CR0 = self.config.CR0
-        self.CR2 = self.config.CR2
-        self.theta_prev = float(index)
+        self.CR0   = self.config.CR0
+        self.CR2   = self.config.CR2
         self.u_his = [0, 0]
         self.mpc_prob_init()
         self.x0_opt_prev = x0_opt_prev
@@ -179,7 +179,6 @@ class STMPCCPlannerCasadi:
         return u, mpc_ref_path_x, mpc_ref_path_y, mpc_pred_x, mpc_pred_y
 
     def clip_input(self, u):
-        # u = [Fxr, delta_v]
         u0 = ca.fmin(
             ca.fmax(u[0], self.config.MAX_DECEL * self.config.MASS),
             self.config.MAX_ACCEL * self.config.MASS)
@@ -479,10 +478,8 @@ class STMPCCPlannerCasadi:
 
         opts = {
         'ipopt.print_level': 0,
-        'ipopt.max_iter': 200,  # Reduce iterations
+        'ipopt.max_iter': 5000,  # Reduce iterations
         'ipopt.tol': 1e-2,  # Relax tolerance
-        # 'ipopt.acceptable_tol': 1e-2,
-        # 'ipopt.acceptable_obj_change_tol': 1e-3,
         'ipopt.warm_start_init_point': 'yes',
         'ipopt.mu_strategy': 'adaptive',
         'print_time': 0,
@@ -590,6 +587,8 @@ class STMPCCPlannerCasadi:
 
             if is_successful:
                 print(f"Solver succeeded with status: {status_message}")
+                iterations = solver_stats['iter_count']
+                print(f"IPOPT converged in {iterations} iterations.")
             else:
                 # pdb.set_trace()
                 print(f"Solver failed with status: {status_message}")
@@ -654,8 +653,8 @@ if __name__ == '__main__':
     start_point = 1  # index on the trajectory to start from
     dyn_config = MPCConfigDYN()
 
-    map_file = 'data/rounded_rectangle_waypoints.csv'
-    tpamap_name = 'data/rounded_rectangle_tpamap.csv'
+    map_file     = 'data/rounded_rectangle_waypoints.csv'
+    tpamap_name  = 'data/rounded_rectangle_tpamap.csv'
     tpadata_name = 'data/rounded_rectangle_tpadata.json'
 
     tpamap = np.loadtxt(tpamap_name, delimiter=';', skiprows=1)
@@ -664,12 +663,13 @@ if __name__ == '__main__':
     with open(tpadata_name) as f:
         tpadata = json.load(f)
 
-    raceline = np.loadtxt(map_file, delimiter=";", skiprows=3)
+    raceline  = np.loadtxt(map_file, delimiter=";", skiprows=3)
     waypoints = np.array(raceline)
 
     # Initialize with velocity with 4.0 <= <= 8.0 (or must increase the interation in the interation in the solver)
     ini_vehicle_state = np.array([[waypoints[start_point, 1], waypoints[start_point, 2], 7.0, 0.0 , 0.0, 0.0, 0.0]])
-    planner_dyn_mpc = STMPCCPlannerCasadi(waypoints=waypoints,config=dyn_config, index=start_point, x0_opt_prev=ini_vehicle_state)
+    planner_dyn_mpc   = STMPCCPlannerCasadi(waypoints=waypoints,  config=dyn_config)
+
 
     BR = 15.9504
     CR = 1.3754
@@ -687,14 +687,22 @@ if __name__ == '__main__':
     print("Optimal steering speed:", u[1])
 
 
-    with open('data/data_for_diff/log_ca_c150.0_l900.0_p25.0', 'r') as f:
+    with open('data/log_full_Vinit_8.0_c50.0_l3000.0_p18.0_weightslip0.5_thetaslip_50_200_275_325', 'r') as f:
         data = json.load(f)
     print(data.keys())
 
 
-    X = jnp.array(data['x'])
-    Y = jnp.array(data['y'])
+    X  = jnp.array(data['x'])
+    Y  = jnp.array(data['y'])
     VX = jnp.array(data['vx'])
     VY = jnp.array(data['vy'])
+
+
+
+    # ini_vehicle_state = np.array([[waypoints[start_point, 1], waypoints[start_point, 2], 7.0, 0.0 , 0.0, 0.0, 0.0]])
+    # planner_dyn_mpc = STMPCCPlannerCasadi(waypoints=waypoints,config=dyn_config, index=start_point, x0_opt_prev=ini_vehicle_state)
+
+
+
 
 
