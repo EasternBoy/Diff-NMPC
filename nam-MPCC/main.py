@@ -15,7 +15,7 @@ import time
 from scipy.spatial import KDTree
 
 
-data = pd.read_csv("waypoints.csv")
+data = pd.read_csv("data/waypoints.csv")
 df = data[["theta", "X", "Y"]].copy()
 df = df.sort_values("theta")
 df = df.groupby("theta", as_index=False).mean()
@@ -126,15 +126,15 @@ class MPCConfigDYN:
     MAX_SPEED: float = 50.0  # maximum speed [m/s]
     MIN_SPEED: float = 2.0  # minimum backward speed [m/s]
     MIN_POS_X: float = -np.inf  # minimum horizontal direction (x) 
-    MAX_POS_X: float = np.inf  # maximum horizontal direction (x) 
+    MAX_POS_X: float =  np.inf  # maximum horizontal direction (x) 
     MIN_POS_Y: float = -np.inf  # minimum vertical direction (y) 
-    MAX_POS_Y: float = np.inf  # maximum vertical direction (y) 
+    MAX_POS_Y: float =  np.inf  # maximum vertical direction (y) 
     MIN_SPEED_LAT: float = -np.inf  # minimum latteral speed (m/s)
-    MAX_SPEED_LAT: float = np.inf # maximum latteral speed (m/s)
+    MAX_SPEED_LAT: float =  np.inf # maximum latteral speed (m/s)
 
     # model parameters
     MASS: float = 1225.887  # Vehicle mass
-    I_Z: float = 1560.3729  # Vehicle inertia
+    I_Z: float  = 1560.3729  # Vehicle inertia
     TORQUE_SPLIT: float = 0.0  # Torque distribution
 
     # https://arxiv.org/pdf/1905.05150.pdf - equation (7)
@@ -152,8 +152,8 @@ class STMPCCPlannerCasadi:
         self.track_length = float(theta_max - theta_min)
         self.theta_index = self.config.NXK - 1
         
-        self.input_o = np.zeros(self.config.NU) * np.NAN  # NU = 2 (accel, steering)
-        self.states_output = np.ones((self.config.NXK, self.config.TK + 1)) * np.NaN
+        self.input_o = np.zeros(self.config.NU) * np.nan  # NU = 2 (accel, steering)
+        self.states_output = np.ones((self.config.NXK, self.config.TK + 1)) * np.nan
         
         self.q_contour = self.config.q_contour      # Contouring error weight
         self.q_lag = self.config.q_lag              # Lag error weight  
@@ -481,7 +481,7 @@ class STMPCCPlannerCasadi:
 
         opts = {
         'ipopt.print_level': 0,
-        'ipopt.max_iter': 500,  # Reduce iterations
+        'ipopt.max_iter': 1000,  # Reduce iterations
         'ipopt.tol': 1e-2,  # Relax tolerance
         # 'ipopt.acceptable_tol': 1e-2,
         # 'ipopt.acceptable_obj_change_tol': 1e-3,
@@ -657,9 +657,9 @@ if __name__ == '__main__':
     start_point = 1  # index on the trajectory to start from
     dyn_config = MPCConfigDYN()
 
-    map_file = 'rounded_rectangle_waypoints.csv'
-    tpamap_name = 'rounded_rectangle_tpamap.csv'
-    tpadata_name = 'rounded_rectangle_tpadata.json'
+    map_file = 'data/rounded_rectangle_waypoints.csv'
+    tpamap_name = 'data/rounded_rectangle_tpamap.csv'
+    tpadata_name = 'data/rounded_rectangle_tpadata.json'
 
     tpamap = np.loadtxt(tpamap_name, delimiter=';', skiprows=1)
 
@@ -671,8 +671,7 @@ if __name__ == '__main__':
     waypoints = np.array(raceline)
 
     # Initialize with velocity with 4.0 <= <= 8.0 (or must increase the interation in the interation in the solver)
-    ini_vehicle_state = np.array([[waypoints[start_point, 1], waypoints[start_point, 2], 8.0, 0.0 , 0.0, 0.0, 
-                                   0.0]])
+    ini_vehicle_state = np.array([[waypoints[start_point, 1], waypoints[start_point, 2], 6.0, 0.0 , 0.0, 0.0, 0.0]])
     planner_dyn_mpc = STMPCCPlannerCasadi(waypoints=waypoints,config=dyn_config, index=start_point, x0_opt_prev=ini_vehicle_state)
 
     BR = 15.9504
@@ -687,5 +686,5 @@ if __name__ == '__main__':
 
     u, _, _, _, _ = planner_dyn_mpc.plan(np.squeeze(ini_vehicle_state), param)
     u[0] = u[0] / planner_dyn_mpc.config.MASS  # Force to acceleration
-    print("optimal control input:", u[0])
-
+    print("Optimal acceleration:", u[0])
+    print("Optimal steering speed:", u[1])
