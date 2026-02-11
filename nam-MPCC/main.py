@@ -71,7 +71,8 @@ class ThetaLookupTable:
                 theta_weighted = np.sum(self.theta_samples[indices[i]] * weights)
                 thetas.append(theta_weighted)
             return np.array(thetas)
-    
+find_theta = ThetaLookupTable(spline_x, spline_y, theta_min, theta_max, n_samples=1000000)   
+
 def lookup_xy(theta_query):
     return float(spline_x(theta_query)), float(spline_y(theta_query))
 
@@ -90,13 +91,13 @@ class MPCConfigDYN:
     Parameters for MPCC objective
     '''
     Rk_ca: list = field(
-        default_factory=lambda: np.diag([0.0001, 2.0, 0.1]))  # input cost matrix, penalty for inputs - [accel, steering_speed, vi_speed]
+        default_factory=lambda: np.diag([0.0005, 2.0, 0.01]))  # input cost matrix, penalty for inputs - [accel, steering_speed, vi_speed]
     Rdk_ca: list = field(
-        default_factory=lambda: np.diag([0.001, 3.0, 0.1]))  # input difference cost matrix, penalty for change of inputs - [accel, steering_speed, vi_speed]
+        default_factory=lambda: np.diag([0.01, 2.0, 0.01]))  # input difference cost matrix, penalty for change of inputs - [accel, steering_speed, vi_speed]
 
-    q_contour: float = 100.0
-    q_lag: float     = 200.0
-    q_theta: float   = 2.0
+    q_contour: float = 50.0
+    q_lag: float     = 3000.0
+    q_theta: float   = 18.0
 
     '''
     Learning parameters for predictive model
@@ -142,7 +143,7 @@ class MPCConfigDYN:
 
 
 class STMPCCPlannerCasadi:
-    def __init__(self, config, waypoints=None, x0_opt_prev=None):
+    def __init__(self, config, waypoints=None):
         self.waypoints = waypoints
         self.config = config    
         self.look_theta = ThetaLookupTable(spline_x, spline_y, theta_min, theta_max, n_samples=1000000)
@@ -169,13 +170,12 @@ class STMPCCPlannerCasadi:
         self.CR2   = self.config.CR2
         self.u_his = [0, 0]
         self.mpc_prob_init()
-        self.x0_opt_prev = x0_opt_prev
 
-    def plan(self, states, param, waypoints=None):
+    def plan(self, states, param, theta_0, waypoints=None):
         if waypoints is not None:
             self.waypoints = waypoints
 
-        u, mpc_ref_path_x, mpc_ref_path_y, mpc_pred_x, mpc_pred_y = self.MPCC_Control(states, param)
+        u, mpc_ref_path_x, mpc_ref_path_y, mpc_pred_x, mpc_pred_y = self.MPCC_Control(states, param, theta_0)
         return u, mpc_ref_path_x, mpc_ref_path_y, mpc_pred_x, mpc_pred_y
 
     def clip_input(self, u):
@@ -478,7 +478,7 @@ class STMPCCPlannerCasadi:
 
         opts = {
         'ipopt.print_level': 0,
-        'ipopt.max_iter': 5000,  # Reduce iterations
+        'ipopt.max_iter': 1000,  # Reduce iterations
         'ipopt.tol': 1e-2,  # Relax tolerance
         'ipopt.warm_start_init_point': 'yes',
         'ipopt.mu_strategy': 'adaptive',
@@ -542,7 +542,7 @@ class STMPCCPlannerCasadi:
         # Initial guess
         self.x0_opt = None
 
-    def mpc_prob_solve(self, x0, u_his, param):
+    def mpc_prob_solve(self, x0, u_his, param, theta_0):
         """
         x0 should be [x, y, vx, yaw, vy, yaw_rate, steering_angle] (7 elements)
         theta is handled separately
@@ -551,7 +551,6 @@ class STMPCCPlannerCasadi:
         # Get current theta from vehicle position
         print("initial states:", x0)
         print("self.look_theta.query(x0[0], x0[1], k_neighbors=5)")
-        theta_0 = self.look_theta.query(x0[0], x0[1], k_neighbors=10)
 
         # Ensure yaw continuity with previous warm-start solution.
         # Without this, a simulator wrap (e.g. 3.14 → -3.14) makes the
@@ -619,14 +618,14 @@ class STMPCCPlannerCasadi:
         
 
 
-    def MPCC_Control(self, x0_full, param):
+    def MPCC_Control(self, x0_full, param, theta_0):
         """
         x0_full can be either:
         - [x, y, vx, yaw, vy, yaw_rate, steering_angle] (7 elements)
         """
         x0 = x0_full[:self.config.NXK]
         # Solve MPCC
-        input_o, states_output, theta_output = self.mpc_prob_solve(x0, self.u_his, param)
+        input_o, states_output, theta_output = self.mpc_prob_solve(x0, self.u_his, param, theta_0)
         if not np.any(np.isnan(states_output)):
             self.states_output = states_output
             self.input_o = input_o
@@ -650,7 +649,7 @@ class STMPCCPlannerCasadi:
         return u, ref_path_x, ref_path_y, pred_x, pred_y
   
 if __name__ == '__main__':
-    start_point = 1  # index on the trajectory to start from
+    start_point = 1 # index on the trajectory to start from
     dyn_config = MPCConfigDYN()
 
     map_file     = 'data/rounded_rectangle_waypoints.csv'
@@ -666,8 +665,8 @@ if __name__ == '__main__':
     raceline  = np.loadtxt(map_file, delimiter=";", skiprows=3)
     waypoints = np.array(raceline)
 
-    # Initialize with velocity with 4.0 <= <= 8.0 (or must increase the interation in the interation in the solver)
-    ini_vehicle_state = np.array([[waypoints[start_point, 1], waypoints[start_point, 2], 7.0, 0.0 , 0.0, 0.0, 0.0]])
+    # Initialize with velocity with 5.0 <= <= 8.5 (or must increase the interation in the interation in the solver)
+    ini_vehicle_state = np.array([[waypoints[start_point, 1], waypoints[start_point, 2], 8.0, 0.0 , 0.0, 0.0, 0.0]])
     planner_dyn_mpc   = STMPCCPlannerCasadi(waypoints=waypoints,  config=dyn_config)
 
 
@@ -680,8 +679,8 @@ if __name__ == '__main__':
     CM = 0.9459
 
     param = [BR, CR, DR, BF, CF, DF, CM]
-
-    u, _, _, _, _ = planner_dyn_mpc.plan(np.squeeze(ini_vehicle_state), param)
+    theta_0 = find_theta.query(waypoints[start_point, 1],waypoints[start_point, 2], k_neighbors=30)
+    u, _, _, _, _ = planner_dyn_mpc.plan(np.squeeze(ini_vehicle_state), param, theta_0)
     u[0] = u[0] / planner_dyn_mpc.config.MASS  # Force to acceleration
     print("Optimal acceleration:", u[0])
     print("Optimal steering speed:", u[1])
