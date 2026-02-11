@@ -1,4 +1,3 @@
-import time
 from dataclasses import dataclass, field
 import casadi as ca
 import numpy as np
@@ -11,9 +10,8 @@ import pandas as pd
 from argparse import Namespace
 import json
 import pandas as pd
-import time
 from scipy.spatial import KDTree
-
+import jax.numpy as jnp
 
 data = pd.read_csv("data/waypoints.csv")
 df = data[["theta", "X", "Y"]].copy()
@@ -481,7 +479,7 @@ class STMPCCPlannerCasadi:
 
         opts = {
         'ipopt.print_level': 0,
-        'ipopt.max_iter': 1000,  # Reduce iterations
+        'ipopt.max_iter': 200,  # Reduce iterations
         'ipopt.tol': 1e-2,  # Relax tolerance
         # 'ipopt.acceptable_tol': 1e-2,
         # 'ipopt.acceptable_obj_change_tol': 1e-3,
@@ -671,7 +669,7 @@ if __name__ == '__main__':
     waypoints = np.array(raceline)
 
     # Initialize with velocity with 4.0 <= <= 8.0 (or must increase the interation in the interation in the solver)
-    ini_vehicle_state = np.array([[waypoints[start_point, 1], waypoints[start_point, 2], 6.0, 0.0 , 0.0, 0.0, 0.0]])
+    ini_vehicle_state = np.array([[waypoints[start_point, 1], waypoints[start_point, 2], 7.0, 0.0 , 0.0, 0.0, 0.0]])
     planner_dyn_mpc = STMPCCPlannerCasadi(waypoints=waypoints,config=dyn_config, index=start_point, x0_opt_prev=ini_vehicle_state)
 
     BR = 15.9504
@@ -688,3 +686,16 @@ if __name__ == '__main__':
     u[0] = u[0] / planner_dyn_mpc.config.MASS  # Force to acceleration
     print("Optimal acceleration:", u[0])
     print("Optimal steering speed:", u[1])
+
+
+    with open('data/data_for_diff/log_ca_c150.0_l900.0_p25.0', 'r') as f:
+        data = json.load(f)
+    print(data.keys())
+
+
+    X = jnp.array(data['x'])
+    Y = jnp.array(data['y'])
+    VX = jnp.array(data['vx'])
+    VY = jnp.array(data['vy'])
+
+

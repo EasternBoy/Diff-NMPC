@@ -1,6 +1,6 @@
 import json
 
-with open('log_ca_c100.0_l400.0_p10.0', 'r') as f:
+with open('data/data_for_diff/log_ca_c100.0_l400.0_p10.0', 'r') as f:
     log = json.load(f)
 print(log.keys())
 # dict_keys(['time', 'x', 'y', 'lap_n', 'vx', 'v_ref', 'tracking_error'])
