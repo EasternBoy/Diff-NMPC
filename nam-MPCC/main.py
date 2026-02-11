@@ -143,7 +143,7 @@ class MPCConfigDYN:
 
 
 class STMPCCPlannerCasadi:
-    def __init__(self, config, waypoints=None):
+    def __init__(self, config, waypoints=None, x0=None, param=None):
         self.waypoints = waypoints
         self.config = config    
         self.look_theta = ThetaLookupTable(spline_x, spline_y, theta_min, theta_max, n_samples=1000000)
@@ -169,13 +169,39 @@ class STMPCCPlannerCasadi:
         self.CR0   = self.config.CR0
         self.CR2   = self.config.CR2
         self.u_his = [0, 0]
+
+
+        start_point = 1
+        if x0 is None:
+            self.x0 = np.array([waypoints[start_point, 1], waypoints[start_point, 2], 8.0, 0.0 , 0.0, 0.0, 0.0])
+        else:
+            self.x0 = x0
+
+        self.theta0 = find_theta.query(self.x0[0], self.x0[1], k_neighbors=30)
+
+
+        BR = 15.9504
+        CR = 1.3754
+        DR = 4500.9280
+        BF = 9.4246
+        CF = 5.9139  
+        DF = 4500.8218
+        CM = 0.9459
+        self.param = np.array([BR, CR, DR, BF, CF, DF, CM], dtype=float)
+
         self.mpc_prob_init()
 
-    def plan(self, states, param, theta_0, waypoints=None):
+
+
+    def plan(self, states, param, waypoints=None):
+
+        theta_0 = find_theta.query(states[1], states[2], k_neighbors=30)
+
         if waypoints is not None:
             self.waypoints = waypoints
 
         u, mpc_ref_path_x, mpc_ref_path_y, mpc_pred_x, mpc_pred_y = self.MPCC_Control(states, param, theta_0)
+
         return u, mpc_ref_path_x, mpc_ref_path_y, mpc_pred_x, mpc_pred_y
 
     def clip_input(self, u):
@@ -329,16 +355,15 @@ class STMPCCPlannerCasadi:
         return x0_opt
     
     def mpc_prob_init(self):
-        self.x0_opt = None
-        self.xk = ca.MX.sym('xk', self.config.NXK, self.config.TK + 1)  # NXK = 7 (no theta)
-        self.uk = ca.MX.sym('uk', self.config.NU, self.config.TK)        # NU = 2
-        self.theta_k = ca.MX.sym('theta_k', self.config.TK + 1)          # Theta as separate variable
-        self.vik = ca.MX.sym('vik', self.config.TK)                      # v_theta
+        xk      = ca.MX.sym('xk', self.config.NXK, self.config.TK + 1)   # NXK = 7 (no theta)
+        uk      = ca.MX.sym('uk', self.config.NU, self.config.TK)        # NU = 2
+        theta_k = ca.MX.sym('theta_k', self.config.TK + 1)          # Theta as separate variable
+        vik     = ca.MX.sym('vik', self.config.TK)                      # v_theta
         
         # Parameters
-        self.x0k = ca.MX.sym('x0k', self.config.NXK)
-        self.theta0 = ca.MX.sym('theta0')  # Initial theta
-        self.param = ca.MX.sym('param', self.config.num_param)
+        x0k    = ca.MX.sym('x0k', self.config.NXK)
+        theta0 = ca.MX.sym('theta0')  # Initial theta
+        param  = ca.MX.sym('param', self.config.num_param)
 
         # CasADi interpolants for symbolic evaluation of the reference (periodic extension)
         theta_grid = np.array(theta, dtype=float)
@@ -389,22 +414,22 @@ class STMPCCPlannerCasadi:
 
         # Dynamics constraints for vehicle states
         for t in range(self.config.TK):
-            x_next = self.rk4_step(self.xk[:, t], self.uk[:, t], self.param)
+            x_next = self.rk4_step(xk[:, t], uk[:, t], param)
             
-            constraints.append(self.xk[:, t + 1] - x_next)
+            constraints.append(xk[:, t + 1] - x_next)
             lbg.extend([0.0] * self.config.NXK)
             ubg.extend([0.0] * self.config.NXK)
         
   
         for t in range(self.config.TK):
-            theta_next = self.theta_k[t] + self.DTK * self.vik[t]
-            constraints.append(self.theta_k[t + 1] - theta_next)
+            theta_next = theta_k[t] + self.DTK * vik[t]
+            constraints.append(theta_k[t + 1] - theta_next)
             lbg.append(0.0)
             ubg.append(0.0)
 
         # Cost function - contouring and lag errors
         for t in range(self.config.TK + 1):
-            theta_t = ca.fmod(self.theta_k[t] - self.theta_min, self.track_length) + self.theta_min
+            theta_t = ca.fmod(theta_k[t] - self.theta_min, self.track_length) + self.theta_min
             x_ref = self.ref_x_fun(theta_t)
             y_ref = self.ref_y_fun(theta_t)
             phi_t = self.ref_phi_fun(theta_t)
@@ -412,8 +437,8 @@ class STMPCCPlannerCasadi:
             cos_phi_t = ca.cos(phi_t)
 
             # Position error relative to reference at theta_k[t]
-            dx = self.xk[0, t] - x_ref
-            dy = self.xk[1, t] - y_ref
+            dx = xk[0, t] - x_ref
+            dy = xk[1, t] - y_ref
             # Contouring error (perpendicular to path)
             e_c = sin_phi_t * dx - cos_phi_t * dy
             # Lag error (along path)
@@ -422,31 +447,31 @@ class STMPCCPlannerCasadi:
             objective += self.q_lag * e_l ** 2
         # Progress reward - maximize theta progression (negative cost)
         for t in range(self.config.TK):
-            objective += -self.q_theta * self.vik[t]
+            objective += -self.q_theta * vik[t]
 
         # Input control effort
         for t in range(self.config.TK):
-            p_u_1 = self.uk[0, t]
-            p_u_2 = self.uk[1, t]
-            p_vi = self.vik[t]
+            p_u_1 = uk[0, t]
+            p_u_2 = uk[1, t]
+            p_vi = vik[t]
             p_u = ca.vertcat(p_u_1, p_u_2, p_vi)
             objective += p_u.T@self.config.Rk_ca@ p_u
 
         # Input smoothness
         for t in range(self.config.TK - 1):
-            du_1 = self.uk[0, t + 1] - self.uk[0, t]
-            du_2 = self.uk[1, t + 1] - self.uk[1, t]
-            dvi = self.vik[t + 1] - self.vik[t]
+            du_1 = uk[0, t + 1] - uk[0, t]
+            du_2 = uk[1, t + 1] - uk[1, t]
+            dvi = vik[t + 1] - vik[t]
             du = ca.vertcat(du_1, du_2, dvi)
             objective += du.T@self.config.Rdk_ca@ du
 
         # Initial condition constraints
-        constraints.append(self.xk[:, 0] - self.x0k)
+        constraints.append(xk[:, 0] - x0k)
         lbg.extend([0.0] * self.config.NXK)
         ubg.extend([0.0] * self.config.NXK)
         
         # Initial theta constraint
-        constraints.append(self.theta_k[0] - self.theta0)
+        constraints.append(theta_k[0] - theta0)
         lbg.append(0.0)
         ubg.append(0.0)
 
@@ -455,17 +480,17 @@ class STMPCCPlannerCasadi:
 
         # Decision variable vector
         opt_variables = ca.vertcat(
-            ca.reshape(self.xk, -1, 1),      # States (7 x (TK+1))
-            ca.reshape(self.uk, -1, 1),      # Controls (2 x TK)
-            self.theta_k,                     # Theta (TK+1)
-            self.vik                          # v_theta (TK)
+            ca.reshape(xk, -1, 1),      # States (7 x (TK+1))
+            ca.reshape(uk, -1, 1),      # Controls (2 x TK)
+            theta_k,                     # Theta (TK+1)
+            vik                          # v_theta (TK)
         )
 
         # Parameter vector
         opt_params = ca.vertcat(
-            self.x0k,
-            self.theta0,
-            self.param
+            x0k,
+            theta0,
+            param
         )
 
         # Create NLP
@@ -486,9 +511,7 @@ class STMPCCPlannerCasadi:
         }
 
         self.solver = ca.nlpsol('solver', 'ipopt', nlp, opts)       
-        # self.solver = ca.nlpsol('solver', 'sqpmethod', nlp)    
         
-       
         # Store sizes for unpacking
         self.n_states = self.config.NXK * (self.config.TK + 1)
         self.n_controls = self.config.NU * self.config.TK
@@ -540,17 +563,31 @@ class STMPCCPlannerCasadi:
         self.lbg = lbg
         self.ubg = ubg
         # Initial guess
-        self.x0_opt = None
 
-    def mpc_prob_solve(self, x0, u_his, param, theta_0):
+        self.x0_opt = self.get_initial_guess(self.x0, self.param, self.theta0)
+
+        self.solver(
+                x0  = self.x0_opt,
+                lbx = self.lbx,
+                ubx = self.ubx,
+                lbg = self.lbg,
+                ubg = self.ubg,
+                p   = opt_params)
+
+
+
+    def mpc_prob_solve(self, x0, param, theta_0):
         """
         x0 should be [x, y, vx, yaw, vy, yaw_rate, steering_angle] (7 elements)
         theta is handled separately
         """
-        x0 = x0.copy()
+        # x0 = x0.copy()
+
+        x0_opt = x0.copy()
+
         # Get current theta from vehicle position
-        print("initial states:", x0)
-        print("self.look_theta.query(x0[0], x0[1], k_neighbors=5)")
+        # print("initial states:", x0)
+        # print("self.look_theta.query(x0[0], x0[1], k_neighbors=5)")
 
         # Ensure yaw continuity with previous warm-start solution.
         # Without this, a simulator wrap (e.g. 3.14 → -3.14) makes the
@@ -561,60 +598,48 @@ class STMPCCPlannerCasadi:
             x0[3] -= np.round(diff / (2.0 * np.pi)) * 2.0 * np.pi
 
         # Build parameter vector
-        p = np.concatenate([
-            x0,
+        ca_para = np.concatenate([
+             x0,
             [theta_0],
-            param
+             param
         ])
 
-        # Build a rollout-based initial guess using current parameters
-        if self.x0_opt is None or np.any(np.isnan(self.x0_opt)):
-            self.x0_opt = self.get_initial_guess(x0, param, theta_0)
+        sol = self.solver(p = ca_para)
+
+            
+        solver_stats   = self.solver.stats()
+        is_successful  = solver_stats['success']
+        status_message = solver_stats['return_status']
+
+        print("Solver status:", status_message)
+
+
+        if is_successful:
+            print(f"Solver succeeded with status: {status_message}")
+            iterations = solver_stats['iter_count']
+            print(f"IPOPT converged in {iterations} iterations.")
+        else:
+            print(f"Solver failed with status: {status_message}")
+
+        # Extract solution
+        x_opt = sol['x'].full().flatten()
         
-        try:
-            sol = self.solver(
-                x0=self.x0_opt,
-                lbx=self.lbx,
-                ubx=self.ubx,
-                lbg=self.lbg,
-                ubg=self.ubg,
-                p=p)
-            
-            solver_stats = self.solver.stats()
-            is_successful = solver_stats['success']
-            status_message = solver_stats['return_status']
+        # Unpack states, controls, theta, and v_theta
+        idx = 0
+        states = x_opt[idx:idx + self.n_states].reshape((self.config.TK + 1, self.config.NXK)).T
+        idx += self.n_states
+        controls = x_opt[idx:idx + self.n_controls].reshape((self.config.TK, self.config.NU)).T
+        idx += self.n_controls
+        theta = x_opt[idx:idx + self.n_theta]
+        vi = x_opt[idx:idx + self.n_vi]
 
-            if is_successful:
-                print(f"Solver succeeded with status: {status_message}")
-                iterations = solver_stats['iter_count']
-                print(f"IPOPT converged in {iterations} iterations.")
-            else:
-                # pdb.set_trace()
-                print(f"Solver failed with status: {status_message}")
-            # Extract solution
-            x_opt = sol['x'].full().flatten()
-            
-            # Unpack states, controls, theta, and v_theta
-            idx = 0
-            states = x_opt[idx:idx + self.n_states].reshape((self.config.TK + 1, self.config.NXK)).T
-            idx += self.n_states
-            controls = x_opt[idx:idx + self.n_controls].reshape((self.config.TK, self.config.NU)).T
-            idx += self.n_controls
-            theta = x_opt[idx:idx + self.n_theta]
-            vi = x_opt[idx:idx + self.n_vi]
+        yaw_offset = np.round(states[3, 0] / (2.0 * np.pi)) * 2.0 * np.pi
+        for t in range(self.config.TK + 1):
+            x_opt[t * self.config.NXK + 3] -= yaw_offset
+        self.x0_opt = x_opt 
 
-            yaw_offset = np.round(states[3, 0] / (2.0 * np.pi)) * 2.0 * np.pi
-            for t in range(self.config.TK + 1):
-                x_opt[t * self.config.NXK + 3] -= yaw_offset
-            self.x0_opt = x_opt  
-            return controls, states, theta
-                
-        except Exception as e:
-            # print(f"Optimization error: {e}")
-            controls = u_his
-            states = np.tile(x0[:, None], (1, self.config.TK + 1))
-            theta = np.full(self.n_theta, np.nan)
-            return controls, states, theta
+        return controls, states, theta, status_message
+            
         
 
 
@@ -623,9 +648,11 @@ class STMPCCPlannerCasadi:
         x0_full can be either:
         - [x, y, vx, yaw, vy, yaw_rate, steering_angle] (7 elements)
         """
+
         x0 = x0_full[:self.config.NXK]
         # Solve MPCC
-        input_o, states_output, theta_output = self.mpc_prob_solve(x0, self.u_his, param, theta_0)
+        input_o, states_output, theta_output, status = self.mpc_prob_solve(x0, param, theta_0)
+
         if not np.any(np.isnan(states_output)):
             self.states_output = states_output
             self.input_o = input_o
@@ -649,7 +676,7 @@ class STMPCCPlannerCasadi:
         return u, ref_path_x, ref_path_y, pred_x, pred_y
   
 if __name__ == '__main__':
-    start_point = 1 # index on the trajectory to start from
+    start_point = 10 # index on the trajectory to start from
     dyn_config = MPCConfigDYN()
 
     map_file     = 'data/rounded_rectangle_waypoints.csv'
@@ -666,8 +693,27 @@ if __name__ == '__main__':
     waypoints = np.array(raceline)
 
     # Initialize with velocity with 5.0 <= <= 8.5 (or must increase the interation in the interation in the solver)
-    ini_vehicle_state = np.array([[waypoints[start_point, 1], waypoints[start_point, 2], 8.0, 0.0 , 0.0, 0.0, 0.0]])
-    planner_dyn_mpc   = STMPCCPlannerCasadi(waypoints=waypoints,  config=dyn_config)
+    planner_dyn_mpc   = STMPCCPlannerCasadi(waypoints=waypoints, config=dyn_config)
+
+    with open('data/log_full_Vinit_8.0_c50.0_l3000.0_p18.0_weightslip0.5_thetaslip_50_200_275_325', 'r') as f:
+        data = json.load(f)
+    print(data.keys())
+
+
+    X  = jnp.array(data['x'])
+    Y  = jnp.array(data['y'])
+    Yaw = jnp.array(data['yaw'])
+    Yaw_rate = jnp.array(data['yaw_rate'])
+    VX = jnp.array(data['vx'])
+    VY = jnp.array(data['vy'])
+    STR_angle = jnp.array(data['steer_angle'])
+
+
+    print("=============================================== ")
+    test_index = 100
+    test_state = np.array([X[test_index], Y[test_index], VX[test_index], Yaw[test_index], VY[test_index], Yaw_rate[test_index], STR_angle[test_index]])
+    print("Testing with state:", test_state)
+    print("=============================================== ")
 
 
     BR = 15.9504
@@ -677,30 +723,12 @@ if __name__ == '__main__':
     CF = 5.9139  
     DF = 4500.8218
     CM = 0.9459
+    param = np.array([BR, CR, DR, BF, CF, DF, CM], dtype=float)
 
-    param = [BR, CR, DR, BF, CF, DF, CM]
-    theta_0 = find_theta.query(waypoints[start_point, 1],waypoints[start_point, 2], k_neighbors=30)
-    u, _, _, _, _ = planner_dyn_mpc.plan(np.squeeze(ini_vehicle_state), param, theta_0)
-    u[0] = u[0] / planner_dyn_mpc.config.MASS  # Force to acceleration
+    u, _, _, _, _ = planner_dyn_mpc.plan(test_state, param)
+    u[0] = u[0] / planner_dyn_mpc.config.MASS
     print("Optimal acceleration:", u[0])
     print("Optimal steering speed:", u[1])
-
-
-    with open('data/log_full_Vinit_8.0_c50.0_l3000.0_p18.0_weightslip0.5_thetaslip_50_200_275_325', 'r') as f:
-        data = json.load(f)
-    print(data.keys())
-
-
-    X  = jnp.array(data['x'])
-    Y  = jnp.array(data['y'])
-    VX = jnp.array(data['vx'])
-    VY = jnp.array(data['vy'])
-
-
-
-    # ini_vehicle_state = np.array([[waypoints[start_point, 1], waypoints[start_point, 2], 7.0, 0.0 , 0.0, 0.0, 0.0]])
-    # planner_dyn_mpc = STMPCCPlannerCasadi(waypoints=waypoints,config=dyn_config, index=start_point, x0_opt_prev=ini_vehicle_state)
-
 
 
 
