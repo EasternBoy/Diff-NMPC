@@ -20,8 +20,8 @@ def theta_to_params(theta: jax.Array) -> MPCParams:
     q, r, qf are mapped through softplus to keep them positive.
     """
     a, b, q_raw, r_raw, qf_raw = theta
-    q = jax.nn.softplus(q_raw) + 1e-6
-    r = jax.nn.softplus(r_raw) + 1e-6
+    q  = jax.nn.softplus(q_raw) + 1e-6
+    r  = jax.nn.softplus(r_raw) + 1e-6
     qf = jax.nn.softplus(qf_raw) + 1e-6
     return MPCParams(a=a, b=b, q=q, r=r, qf=qf)
 
@@ -40,9 +40,9 @@ def rollout_dynamics(x0: jax.Array, u: jax.Array, params: MPCParams) -> jax.Arra
 def mpc_cost(u: jax.Array, x0: jax.Array, params: MPCParams) -> jax.Array:
     """Quadratic finite-horizon MPC objective."""
     x = rollout_dynamics(x0, u, params)
-    stage_state = params.q * jnp.sum(x[:-1] ** 2)
+    stage_state   = params.q * jnp.sum(x[:-1] ** 2)
     stage_control = params.r * jnp.sum(u ** 2)
-    terminal = params.qf * (x[-1] ** 2)
+    terminal      = params.qf * (x[-1] ** 2)
     return stage_state + stage_control + terminal
 
 
@@ -234,12 +234,12 @@ def save_plots(output_dir: Path, x_hist, u_hist, du0_dtheta_hist):
 def main():
     # theta = [a, b, q_raw, r_raw, qf_raw]
     theta0 = jnp.array([0.95, 0.35, 0.5, 0.7, 0.5])
-    x0 = jnp.array(2.0)
+    x0     = jnp.array(2.0)
 
-    horizon = 20
+    horizon   = 20
     opt_iters = 120
-    lr = 0.05
-    u_max = 1.5
+    lr        = 0.05
+    u_max     = 1.5
 
     sim_steps = 40
     output_dir = Path(__file__).resolve().parent / "outputs"
@@ -249,7 +249,7 @@ def main():
         x0=x0, params=params0, horizon=horizon, opt_iters=opt_iters, lr=lr, u_max=u_max
     )
     du0_dtheta0 = jax.grad(first_action_from_theta)(theta0, x0, horizon, opt_iters, lr, u_max)
-    du_dtheta0 = jax.jacrev(optimal_u_from_theta)(theta0, x0, horizon, opt_iters, lr, u_max)
+    du_dtheta0  = jax.jacrev(optimal_u_from_theta)(theta0, x0, horizon, opt_iters, lr, u_max)
 
     x_hist, u_hist, cost_hist, du0_hist = run_closed_loop(
         theta=theta0,

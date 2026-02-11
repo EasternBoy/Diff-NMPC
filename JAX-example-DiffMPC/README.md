@@ -24,6 +24,19 @@ cd JAX-example-DiffMPC
 python diff_mpc_jax.py
 ```
 
+## Nonlinear Bicycle + Learning
+
+Run this script to:
+
+- solve nonlinear bicycle MPC with JAX autodiff
+- generate trajectory data from a ground-truth controller
+- learn `theta` by differentiating through the MPC solution map
+
+```bash
+cd JAX-example-DiffMPC
+python nonlinear_bicycle_diff_mpc_learning.py
+```
+
 ## Output
 
 After running, the script writes:
@@ -37,6 +50,11 @@ The CSV contains per-step closed-loop values:
 - applied MPC action `u0`
 - MPC objective value at each step
 - sensitivity `du0/dtheta` for each parameter
+
+For nonlinear bicycle learning, outputs are written to:
+
+- `outputs_bicycle/learning_loss.csv`
+- `outputs_bicycle/learning_curves.png` (if `matplotlib` is installed)
 
 ## Notes
 

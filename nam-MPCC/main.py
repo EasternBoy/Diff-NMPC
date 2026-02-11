@@ -483,7 +483,6 @@ class STMPCCPlannerCasadi:
         'ipopt.tol': 1e-2,  # Relax tolerance
         # 'ipopt.acceptable_tol': 1e-2,
         # 'ipopt.acceptable_obj_change_tol': 1e-3,
-        'print_time': 0,
         'ipopt.warm_start_init_point': 'yes',
         'ipopt.mu_strategy': 'adaptive',
         'print_time': 0,
