@@ -29,7 +29,7 @@ spline_y = CubicSpline(onp.asarray(theta), onp.asarray(y), bc_type='natural')
 theta_min = float(theta.min())
 theta_max = float(theta.max())
 
-n_neighbors = 20
+n_neighbors = 5
 
 
 class ThetaLookupTable:
@@ -184,7 +184,7 @@ class STMPCCPlannerCasadi:
 
     def plan(self, states, param):
 
-        theta0 = self.look_theta.query(states[1], states[2], k_neighbors=n_neighbors)
+        theta0 = self.look_theta.query(states[0], states[1], k_neighbors=n_neighbors)
 
         u, mpc_ref_path_x, mpc_ref_path_y, mpc_pred_x, mpc_pred_y = self.MPCC_Control(states, param, theta0)
 
@@ -545,6 +545,7 @@ class STMPCCPlannerCasadi:
         self.lbg = lbg
         self.ubg = ubg
 
+        self.init_sol =  onp.zeros((self.n_states + self.n_controls + self.n_theta + self.n_vi), dtype=float)
     def mpc_prob_solve(self, init_state, param, theta0):
         """
         init_state should be [x, y, vx, yaw, vy, yaw_rate, steering_angle] (7 elements)
@@ -554,7 +555,7 @@ class STMPCCPlannerCasadi:
         # Convert JAX inputs to mutable NumPy arrays before in-place preprocessing.
         init_state = onp.asarray(init_state, dtype=float).copy()
         param = onp.asarray(param, dtype=float)
-        theta0 = float(theta0)
+        # theta0_copy = self.look_theta.query(init_state[0], init_state[1], k_neighbors=5)
 
         if self.init_sol is not None and onp.any(self.init_sol != 0):
             prev_yaw       = self.init_sol[3]  # yaw of first state in previous solution
@@ -603,6 +604,7 @@ class STMPCCPlannerCasadi:
 
         # Solve MPCC
         # input_o, states_output, theta_output, status = self.mpc_prob_solve(init_state, param, theta0)
+        init_state = init_state[:self.config.NXK]
         opt_sol, status = self.mpc_prob_solve(init_state, param, theta0)
 
         if not status:
