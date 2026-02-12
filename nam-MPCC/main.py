@@ -29,7 +29,7 @@ spline_y = CubicSpline(onp.asarray(theta), onp.asarray(y), bc_type='natural')
 theta_min = float(theta.min())
 theta_max = float(theta.max())
 
-n_neighbors = 30
+n_neighbors = 20
 
 
 class ThetaLookupTable:
@@ -184,7 +184,7 @@ class STMPCCPlannerCasadi:
 
     def plan(self, states, param):
 
-        theta0 = find_theta.query(states[1], states[2], k_neighbors=n_neighbors)
+        theta0 = self.look_theta.query(states[1], states[2], k_neighbors=n_neighbors)
 
         u, mpc_ref_path_x, mpc_ref_path_y, mpc_pred_x, mpc_pred_y = self.MPCC_Control(states, param, theta0)
 
@@ -236,11 +236,11 @@ class STMPCCPlannerCasadi:
         state = self.clip_output(state)
         control_input = self.clip_input(control_input)
         
-        x = state[0]
-        y = state[1]
-        vx = state[2]
+        X   = state[0]
+        Y   = state[1]
+        vx  = state[2]
         yaw = state[3]
-        vy = state[4]
+        vy  = state[4]
         yaw_rate = state[5]
         steering_angle = state[6]
         
@@ -288,10 +288,10 @@ class STMPCCPlannerCasadi:
         Build a rollout-based initial guess consistent with dynamics and theta progression.
         """
         # Allocate arrays
-        states = onp.zeros((self.config.NXK, self.config.TK + 1), dtype=float)
-        controls = onp.zeros((self.config.NU, self.config.TK), dtype=float)
-        theta_arr = onp.zeros(self.config.TK + 1, dtype=float)
-        vi_arr = onp.zeros(self.config.TK, dtype=float)
+        states     = onp.zeros((self.config.NXK, self.config.TK + 1), dtype=float)
+        controls   = onp.zeros((self.config.NU, self.config.TK), dtype=float)
+        theta_arr  = onp.zeros(self.config.TK + 1, dtype=float)
+        vi_arr     = onp.zeros(self.config.TK, dtype=float)
 
         # Initial state
         states[:, 0] = init_state
@@ -550,15 +550,27 @@ class STMPCCPlannerCasadi:
         init_state should be [x, y, vx, yaw, vy, yaw_rate, steering_angle] (7 elements)
         theta is handled separately
         """
+
+        # Convert JAX inputs to mutable NumPy arrays before in-place preprocessing.
+        init_state = onp.asarray(init_state, dtype=float).copy()
+        param = onp.asarray(param, dtype=float)
+        theta0 = float(theta0)
+
+        if self.init_sol is not None and onp.any(self.init_sol != 0):
+            prev_yaw       = self.init_sol[3]  # yaw of first state in previous solution
+            diff           = init_state[3] - prev_yaw
+            init_state[3] -= onp.round(diff / (2.0 * onp.pi)) * 2.0 * onp.pi
+
+
         # Get current theta from vehicle position
         if self.init_sol is None:
             self.init_sol = self.get_initial_guess(init_state, param, theta0)
 
         # Build parameter vector
         ca_para = onp.concatenate([
-             onp.asarray(init_state, dtype=float),
+             init_state,
             [theta0],
-             onp.asarray(param, dtype=float)
+             param
         ])
 
         sol = self.solver(
@@ -601,7 +613,6 @@ class STMPCCPlannerCasadi:
             pred_x     = onp.zeros(self.config.TK + 1)
             pred_y     = onp.zeros(self.config.TK + 1)
         else:
-
             # Unpack states, controls, theta, and v_theta
             idx = 0
             states_opt     = opt_sol[idx:idx + self.n_states].reshape((self.config.TK + 1, self.config.NXK)).T
