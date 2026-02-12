@@ -29,7 +29,7 @@ spline_y = CubicSpline(onp.asarray(theta), onp.asarray(y), bc_type='natural')
 theta_min = float(theta.min())
 theta_max = float(theta.max())
 
-n_neighbors = 5
+n_neighbors = 30
 
 
 class ThetaLookupTable:
@@ -98,9 +98,9 @@ class MPCConfigDYN:
     Rdk_ca: list = field(
         default_factory=lambda: onp.diag([0.01, 2.0, 0.01]))  # input difference cost matrix, penalty for change of inputs - [accel, steering_speed, vi_speed]
 
-    q_contour: float = 50.0
+    q_contour: float = 20.0
     q_lag: float     = 3000.0
-    q_theta: float   = 18.0
+    q_theta: float   = 150.0
 
     '''
     Learning parameters for predictive model
@@ -169,7 +169,7 @@ class STMPCCPlannerCasadi:
 
 
         if init_state is None:
-            self.init_state = jnp.array([waypoints[1, 1], waypoints[1, 2], 0.0, 0.0 , 0.0, 0.0, 0.0])
+            self.init_state = jnp.array([waypoints[1, 1], waypoints[1, 2], 8.0, 0.0 , 0.0, 0.0, waypoints[1, 3]])
         else:
             self.init_state = jnp.asarray(init_state, dtype=float)
 
@@ -661,19 +661,20 @@ if __name__ == '__main__':
     waypoints = jnp.asarray(raceline)
 
 
-    BR = 15.9504
-    CR = 1.3754
-    DR = 4500.9280
-    BF = 9.4246
-    CF = 5.9139  
-    DF = 4500.8218
+    CF= 1.6411 
+    DF= 5331.253505960108 
+    BF= 11.325229013060346
+
+    CR= 1.6411 
+    DR= 9099.898225690527
+    BR= 11.325229013060348
     CM = 0.9459
     param = jnp.array([BR, CR, DR, BF, CF, DF, CM], dtype=float)
 
     dyn_config      = MPCConfigDYN()
     planner_dyn_mpc = STMPCCPlannerCasadi(waypoints=waypoints, config=dyn_config, param=param)
 
-    with open('data/log_full_Vinit_8.0_c50.0_l3000.0_p18.0_weightslip0.5_thetaslip_50_200_275_325', 'r') as f:
+    with open('data/log_full_Vinit_8.0_c20.0_l3000.0_p150.0_weightslip1.0_thetaslip_100_150_500_600_non', 'r') as f:
         data = json.load(f)
     print(data.keys())
 
@@ -686,11 +687,11 @@ if __name__ == '__main__':
     VY = jnp.array(data['vy'])
     STR_angle = jnp.array(data['steer_angle'])
 
-    for index in range(10):
+    for index in range(100):
         test_state = jnp.array([X[index], Y[index], VX[index], Yaw[index], VY[index], Yaw_rate[index], STR_angle[index]])
         formatted_state = [float(f"{value:.3f}") for value in onp.asarray(test_state)]
         print("Test state at index %d: %s" % (index, formatted_state,))
         u, _, _, _, _ = planner_dyn_mpc.plan(test_state, param)
         u[0] = u[0] / planner_dyn_mpc.config.MASS
         print("Optimal acceleration:", u[0], "--Data acceleration:", data['acce'][index])
-        print("Optimal steering speed:", u[1], "--Data steering speed:", data['steering_rate'][index], "\n")
+        print("Optimal steering speed:", u[1], "--Data steering speed:", data['steering_rate'][index+1], "\n")
