@@ -28,39 +28,13 @@ class FullParams(NamedTuple):
     dyn: DynParams
     cost: CostParams
 
-
-def _positive(x: jax.Array, eps: float = 1e-6) -> jax.Array:
-    return jax.nn.softplus(x) + eps
-
-
-def theta_to_params(theta: jax.Array) -> FullParams:
-    """
-    theta_raw = [lf_raw, lr_raw, drag_raw,
-                 q_pos_raw, q_yaw_raw, q_v_raw,
-                 r_a_raw, r_delta_raw,
-                 qf_pos_raw, qf_yaw_raw, qf_v_raw]
-    """
-    lf = _positive(theta[0]) + 0.20
-    lr = _positive(theta[1]) + 0.20
-    drag = _positive(theta[2], eps=1e-5)
-
-    cost = CostParams(
-        q_pos=_positive(theta[3]),
-        q_yaw=_positive(theta[4]),
-        q_v=_positive(theta[5]),
-        r_a=_positive(theta[6]),
-        r_delta=_positive(theta[7]),
-        qf_pos=_positive(theta[8]),
-        qf_yaw=_positive(theta[9]),
-        qf_v=_positive(theta[10]),
-    )
-    return FullParams(dyn=DynParams(lf=lf, lr=lr, drag=drag), cost=cost)
-
-
-def wrap_angle(a: jax.Array) -> jax.Array:
-    return jnp.arctan2(jnp.sin(a), jnp.cos(a))
-
-
+# =======================================#
+# Nonlinear kinematic bicycle with simple drag.
+# State: [x, y, yaw, v], Control: [a, delta]
+# lf: distance from vehicle center of gravity (CoG) to the front axle.
+# lr: distance from CoG to the rear axle.
+# Wheelbase is lf + lr.
+# =======================================#
 def bicycle_step(
     state: jax.Array,
     control: jax.Array,
@@ -70,32 +44,31 @@ def bicycle_step(
     steer_max: float,
     v_max: float,
 ) -> jax.Array:
-    """Nonlinear kinematic bicycle with simple drag."""
     x, y, yaw, v = state
     a_cmd, delta_cmd = control
 
-    a = jnp.clip(a_cmd, -a_max, a_max)
+    a     = jnp.clip(a_cmd, -a_max, a_max)
     delta = jnp.clip(delta_cmd, -steer_max, steer_max)
 
-    wb = dyn.lf + dyn.lr
+    wb   = dyn.lf + dyn.lr
     beta = jnp.arctan((dyn.lr / wb) * jnp.tan(delta))
 
-    x_next = x + dt * v * jnp.cos(yaw + beta)
-    y_next = y + dt * v * jnp.sin(yaw + beta)
+    x_next   = x + dt * v * jnp.cos(yaw + beta)
+    y_next   = y + dt * v * jnp.sin(yaw + beta)
     yaw_next = yaw + dt * (v / dyn.lr) * jnp.sin(beta)
-    v_next = jnp.clip(v + dt * (a - dyn.drag * v * jnp.abs(v)), 0.0, v_max)
+    v_next   = jnp.clip(v + dt * (a - dyn.drag * v * jnp.abs(v)), 0.0, v_max)
 
     return jnp.array([x_next, y_next, wrap_angle(yaw_next), v_next])
 
 
 def rollout_dynamics(
-    state0: jax.Array,
+    state0:   jax.Array,
     controls: jax.Array,
-    dyn: DynParams,
-    dt: float,
-    a_max: float,
+    dyn:      DynParams,
+    dt:       float,
+    a_max:    float,
     steer_max: float,
-    v_max: float,
+    v_max:    float,
 ) -> jax.Array:
     def step_fn(st, u):
         st_next = bicycle_step(st, u, dyn, dt, a_max, steer_max, v_max)
@@ -103,6 +76,36 @@ def rollout_dynamics(
 
     _, states_future = jax.lax.scan(step_fn, state0, controls)
     return jnp.concatenate([state0[None, :], states_future], axis=0)
+
+def _positive(x: jax.Array, eps: float = 1e-6) -> jax.Array:
+    return jax.nn.softplus(x) + eps
+
+def theta_to_params(theta: jax.Array) -> FullParams:
+    """
+    theta_raw = [lf_raw, lr_raw, drag_raw,
+                 q_pos_raw, q_yaw_raw, q_v_raw,
+                 r_a_raw, r_delta_raw,
+                 qf_pos_raw, qf_yaw_raw, qf_v_raw]
+    """
+    lf   = _positive(theta[0]) + 0.20
+    lr   = _positive(theta[1]) + 0.20
+    drag = _positive(theta[2], eps=1e-5)
+
+    cost = CostParams(
+        q_pos   =_positive(theta[3]),
+        q_yaw   =_positive(theta[4]),
+        q_v     =_positive(theta[5]),
+        r_a     =_positive(theta[6]),
+        r_delta =_positive(theta[7]),
+        qf_pos  =_positive(theta[8]),
+        qf_yaw  =_positive(theta[9]),
+        qf_v    =_positive(theta[10]),
+    )
+    return FullParams(dyn=DynParams(lf=lf, lr=lr, drag=drag), cost=cost)
+
+
+def wrap_angle(a: jax.Array) -> jax.Array:
+    return jnp.arctan2(jnp.sin(a), jnp.cos(a))
 
 
 def make_reference_line(state0: jax.Array, horizon: int, dt: float, v_ref: float) -> jax.Array:
@@ -114,16 +117,18 @@ def make_reference_line(state0: jax.Array, horizon: int, dt: float, v_ref: float
     ks = jnp.arange(horizon + 1)
     x_ref = x0 + ks * dt * v_ref
 
-    amp = 1.2
-    freq = 0.25
-    y_ref = amp * jnp.sin(freq * x_ref)
-    dy_dx = amp * freq * jnp.cos(freq * x_ref)
-    yaw_ref = jnp.arctan(dy_dx)
+    amp      = 1.2
+    freq     = 0.25
+    y_ref    = amp * jnp.sin(freq * x_ref)
+    dy_dx    = amp * freq * jnp.cos(freq * x_ref)
+    yaw_ref  = jnp.arctan(dy_dx)
 
     v_ref_vec = jnp.ones_like(x_ref) * v_ref
     return jnp.stack([x_ref, y_ref, yaw_ref, v_ref_vec], axis=1)
 
-
+#=======================================#
+#  MPC cost function over rollout trajectory
+#=======================================#
 def mpc_cost(
     u_flat: jax.Array,
     state0: jax.Array,
@@ -136,25 +141,25 @@ def mpc_cost(
     v_ref: float,
 ) -> jax.Array:
     controls = u_flat.reshape(horizon, 2)
-    states = rollout_dynamics(state0, controls, params.dyn, dt, a_max, steer_max, v_max)
-    refs = make_reference_line(state0, horizon, dt, v_ref)
+    states   = rollout_dynamics(state0, controls, params.dyn, dt, a_max, steer_max, v_max)
+    refs     = make_reference_line(state0, horizon, dt, v_ref)
 
-    x_err = states[:-1, 0] - refs[:-1, 0]
-    y_err = states[:-1, 1] - refs[:-1, 1]
-    yaw_err = wrap_angle(states[:-1, 2] - refs[:-1, 2])
-    v_err = states[:-1, 3] - refs[:-1, 3]
+    x_err    = states[:-1, 0] - refs[:-1, 0]
+    y_err    = states[:-1, 1] - refs[:-1, 1]
+    yaw_err  = wrap_angle(states[:-1, 2] - refs[:-1, 2])
+    v_err    = states[:-1, 3] - refs[:-1, 3]
 
     pos_cost = params.cost.q_pos * jnp.sum(x_err**2 + y_err**2)
     yaw_cost = params.cost.q_yaw * jnp.sum(yaw_err**2)
-    v_cost = params.cost.q_v * jnp.sum(v_err**2)
+    v_cost   = params.cost.q_v * jnp.sum(v_err**2)
 
-    a_cost = params.cost.r_a * jnp.sum(controls[:, 0] ** 2)
-    d_cost = params.cost.r_delta * jnp.sum(controls[:, 1] ** 2)
+    a_cost   = params.cost.r_a * jnp.sum(controls[:, 0] ** 2)
+    d_cost   = params.cost.r_delta * jnp.sum(controls[:, 1] ** 2)
 
-    xT_err = states[-1, 0] - refs[-1, 0]
-    yT_err = states[-1, 1] - refs[-1, 1]
+    xT_err   = states[-1, 0] - refs[-1, 0]
+    yT_err   = states[-1, 1] - refs[-1, 1]
     yawT_err = wrap_angle(states[-1, 2] - refs[-1, 2])
-    vT_err = states[-1, 3] - refs[-1, 3]
+    vT_err   = states[-1, 3] - refs[-1, 3]
 
     terminal = (
         params.cost.qf_pos * (xT_err**2 + yT_err**2)
@@ -164,7 +169,9 @@ def mpc_cost(
 
     return pos_cost + yaw_cost + v_cost + a_cost + d_cost + terminal
 
-
+#=======================================#
+#  MPC solver and learning loop
+#=======================================#
 @partial(jax.jit, static_argnames=("horizon", "opt_iters"))
 def solve_mpc(
     state0: jax.Array,
@@ -207,7 +214,9 @@ def solve_mpc(
     j_star = cost_from_u(u_star)
     return u_star, x_star, j_star
 
-
+#=======================================#
+#  Get first action u[0] from MPC
+#=======================================#
 def first_action_from_theta(
     theta: jax.Array,
     state0: jax.Array,
@@ -235,6 +244,9 @@ def first_action_from_theta(
     )
     return u_star[0]
 
+#=======================================#
+#  Generate "expert trajectory" using MPC with known parameters
+#=======================================#
 
 def generate_expert_trajectory(
     theta_true: jax.Array,
@@ -351,28 +363,30 @@ def save_learning_csv(output_dir: Path, losses):
 
 def main():
     # MPC/rollout settings
-    dt = 0.10
-    horizon = 12
-    mpc_iters = 40
-    mpc_lr = 0.08
-    a_max = 2.0
-    steer_max = 0.5
-    v_max = 8.0
-    v_ref = 2.5
+    dt        = 0.1
+    horizon   = 5
+    mpc_iters = 200
+    mpc_lr    = 0.02
+    a_max     = 5.0
+    steer_max = 1.
+    v_max     = 20.0
+    v_ref     = 2.5
+
+    
 
     # Ground-truth parameters used to create "trajectory data"
     theta_true = jnp.array([
-        0.20,  # lf_raw
-        0.10,  # lr_raw
+        0.20,   # lf_raw
+        0.10,   # lr_raw
         -2.20,  # drag_raw
-        1.10,  # q_pos_raw
-        0.60,  # q_yaw_raw
-        0.80,  # q_v_raw
+        1.10,   # q_pos_raw
+        0.60,   # q_yaw_raw
+        0.80,   # q_v_raw
         -0.30,  # r_a_raw
         -0.90,  # r_delta_raw
-        1.30,  # qf_pos_raw
-        0.90,  # qf_yaw_raw
-        0.90,  # qf_v_raw
+        1.30,   # qf_pos_raw
+        0.90,   # qf_yaw_raw
+        0.90,   # qf_v_raw
     ])
 
     # Initial guess to be learned
@@ -391,7 +405,7 @@ def main():
     ])
 
     state0 = jnp.array([0.0, -1.2, 0.35, 1.0])
-    data_steps = 24
+    data_steps = 100
 
     states_data, actions_data = generate_expert_trajectory(
         theta_true=theta_true,
@@ -430,8 +444,8 @@ def main():
     loss_and_grad = jax.jit(jax.value_and_grad(imitation_loss))
 
     # Parameter learning loop
-    train_lr = 0.08
-    train_iters = 80
+    train_lr = 0.1
+    train_iters = 200
     losses = []
 
     init_loss = float(imitation_loss(theta))
@@ -464,8 +478,8 @@ def main():
         )
     )(states_data)
 
-    true_decoded = decode_theta(theta_true)
-    est_decoded = decode_theta(theta)
+    true_decoded  = decode_theta(theta_true)
+    est_decoded   = decode_theta(theta)
 
     print("\nTrue vs learned (selected parameters):")
     for key in ["lf", "lr", "drag", "q_pos", "q_yaw", "q_v", "r_a", "r_delta"]:
