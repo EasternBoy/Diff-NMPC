@@ -72,10 +72,10 @@ def bicycle_step(
     x, y, yaw, v = state
     a_cmd, delta_cmd = control
 
-    a = jnp.clip(a_cmd, -a_max, a_max)
+    a     = jnp.clip(a_cmd, -a_max, a_max)
     delta = jnp.clip(delta_cmd, -steer_max, steer_max)
 
-    wb = dyn.lf + dyn.lr
+    wb   = dyn.lf + dyn.lr
     beta = jnp.arctan((dyn.lr / wb) * jnp.tan(delta))
 
     x_next = x + dt * v * jnp.cos(yaw + beta)
@@ -326,8 +326,8 @@ def save_plots(output_dir: Path, losses, states_init, states_final, actions_fina
     axs[0].grid(True, alpha=0.3)
 
     axs[1].plot(ref[:, 0], ref[:, 1], "--", label="reference", linewidth=1.8)
-    axs[1].plot(states_init[:, 0], states_init[:, 1], label="initial MPC weights", linewidth=1.8)
     axs[1].plot(states_final[:, 0], states_final[:, 1], label="learned MPC weights", linewidth=2.0)
+    axs[1].plot(states_init[:, 0], states_init[:, 1], label="initial MPC weights", linewidth=1.8)
     axs[1].set_title("Closed-Loop Trajectory")
     axs[1].set_xlabel("x")
     axs[1].set_ylabel("y")
@@ -352,29 +352,29 @@ if __name__ == "__main__":
     # MPC and rollout settings
     dt        = 0.1
     horizon   = 10
-    mpc_iters = 200
-    mpc_lr    = 0.02
-    sim_steps = 50
+    mpc_iters = 300
+    mpc_lr    = 0.01
+    sim_steps = 10
     a_max     = 5.0
     steer_max = 1.
-    v_max     = 20.0
-    v_ref     = 2.5
+    v_max     = 10.0
+    v_ref     = 2.
 
     dyn = known_dynamics_params()
     state0 = jnp.array([0.0, -5.0, 0.0, 0.0])
 
     # Optimize only MPC weights (dynamics are known/fixed).
-    # theta = jnp.array([
-    #     0.20,    # q_pos_raw
-    #     0.10,    # q_yaw_raw
-    #     0.20,    # q_v_raw
-    #     -1.20,   # r_a_raw
-    #     -1.50,   # r_delta_raw
-    #     0.20,    # qf_pos_raw
-    #     0.20,    # qf_yaw_raw
-    #     0.20,    # qf_v_raw
-    # ])
-    theta = jax.random.uniform(jax.random.PRNGKey(0), shape=(8,), minval=0, maxval=2)
+    theta = jnp.array([
+        0.20,    # q_pos_raw
+        0.10,    # q_yaw_raw
+        0.20,    # q_v_raw
+        -1.20,   # r_a_raw
+        -1.50,   # r_delta_raw
+        0.20,    # qf_pos_raw
+        0.20,    # qf_yaw_raw
+        0.20,    # qf_v_raw
+    ])
+    # theta = jax.random.uniform(jax.random.PRNGKey(0), shape=(8,), minval=0, maxval=2)
     theta_init = theta
 
     def self_supervised_loss(theta_local: jax.Array) -> jax.Array:
@@ -405,7 +405,7 @@ if __name__ == "__main__":
 
 
     loss_and_grad = jax.jit(jax.value_and_grad(self_supervised_loss))
-    train_lr    = 1e-3
+    train_lr    = 2e-3
     train_iters = 100
     losses      = []
 
@@ -454,7 +454,7 @@ if __name__ == "__main__":
     print("\nLearned MPC weights:")
     for key in ["q_pos", "q_yaw", "q_v", "r_a", "r_delta", "qf_pos", "qf_yaw", "qf_v"]:
         # print(f"{key:>8s}: {decoded[key]:.4f}")
-        print(f"{key:>8s}: true={decoded_init[key]:.4f}, learned={decoded[key]:.4f}")
+        print(f"{key:>8s}: init={decoded_init[key]:.4f}, learned={decoded[key]:.4f}")
 
 
     output_dir = Path(__file__).resolve().parent / "outputs_bicycle_selfsup"
