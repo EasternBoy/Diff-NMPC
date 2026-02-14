@@ -354,7 +354,7 @@ if __name__ == "__main__":
     horizon   = 10
     mpc_iters = 300
     mpc_lr    = 0.01
-    sim_steps = 10
+    sim_steps = 50
     a_max     = 5.0
     steer_max = 1.
     v_max     = 10.0

@@ -89,7 +89,7 @@ def lookup_phi(theta_query):
 class MPCConfigDYN:
     NXK: int = 7  # length of kinematic state vector: z = [x, y, vx, yaw angle, vy, yaw rate, steering angle]
     NU: int = 2   # length of input vector: u = = [acceleration, steering speed]
-    TK: int = 30  # finite time horizon length kinematic
+    TK: int = 20  # finite time horizon length kinematic
     '''
     Parameters for MPCC objective
     '''
@@ -182,13 +182,25 @@ class STMPCCPlannerCasadi:
 
 
 
-    def plan(self, states, param):
+    def plan(self, states, param,  q):
+        self.config.q_contour = q[0]
+        self.config.q_lag     = q[1]
+        self.config.q_theta   = q[2]
+        self.param.BR = param[0]
+        self.param.CR = param[1]
+        self.param.DR = param[2]
+        self.param.BF = param[3]
+        self.param.CF = param[4]
+        self.param.DF = param[5]
+        self.param.CM = param[6]
 
         theta0 = self.look_theta.query(states[0], states[1], k_neighbors=n_neighbors)
 
         u, mpc_ref_path_x, mpc_ref_path_y, mpc_pred_x, mpc_pred_y = self.MPCC_Control(states, param, theta0)
 
-        return u, mpc_ref_path_x, mpc_ref_path_y, mpc_pred_x, mpc_pred_y
+        u[0] = u[0] / self.config.MASS
+
+        return u
 
     def clip_input(self, u):
         u0 = ca.fmin(
@@ -591,11 +603,11 @@ class STMPCCPlannerCasadi:
         is_successful  = solver_stats['success']
         status_message = solver_stats['return_status']
 
-        if is_successful:
-            iterations = solver_stats['iter_count']
-            print(f"Solver succeeded with status: {status_message} in {iterations} iterations")
-        else:
-            print(f"Solver failed with status: {status_message}")
+        # if is_successful:
+        #     iterations = solver_stats['iter_count']
+        #     print(f"Solver succeeded with status: {status_message} in {iterations} iterations")
+        # else:
+        #     print(f"Solver failed with status: {status_message}")
 
         return sol['x'].full().flatten(), is_successful
             
