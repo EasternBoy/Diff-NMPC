@@ -1,12 +1,17 @@
 import json
+import importlib
 import numpy as np
 import jax.numpy as jnp
 
 from DiffMPCC.MPCCsolver import MPCConfigDYN
-from DiffMPCC.casadi_outer_sensitivity import CasadiOuterSensitivityMPCC
+import DiffMPCC.casadi_outer_sensitivity as cos
 
 
 def main():
+    # In notebook sessions, force reload so newly added class methods are visible.
+    importlib.reload(cos)
+    CasadiOuterSensitivityMPCC = cos.CasadiOuterSensitivityMPCC
+
     with open(
         "data/log_full_Vinit_8.0_c20.0_l3000.0_p100.0_weightslip0.5_thetaslip_100_150_290_310_non",
         "r",
@@ -14,7 +19,7 @@ def main():
         data = json.load(f)
 
     cfg = MPCConfigDYN()
-    cfg.TK = 20
+    cfg.TK = 20  # Inner MPC horizon
 
     sens_mpcc = CasadiOuterSensitivityMPCC(cfg)
 
@@ -26,11 +31,12 @@ def main():
     VY = jnp.array(data["vy"])
     STR_angle = jnp.array(data["steer_angle"])
 
-    horizon = 20
-    pg_iters = 10
-    lr = 1e-1
+    n_samples   = 100  # Number of samples to run sensitivity
+    outer_steps = 40   # Outer rollout horizon (can be > cfg.TK)
+    pg_iters    = 10   # Number of projected gradient steps to take on q in each outer iteration
+    lr          = 1e-1 # Learning rate for projected gradient step on q
 
-    for index in range(horizon):
+    for index in range(n_samples):
         state = np.array(
             [X[index], Y[index], VX[index], Yaw[index], VY[index], Yaw_rate[index], STR_angle[index]],
             dtype=float,
@@ -54,10 +60,11 @@ def main():
             dtype=float,
         )
 
-        q_new, loss, grad_q = sens_mpcc.gradient_step_q(
+        q_new, loss, grad_q = sens_mpcc.gradient_step_q_closed_loop(
             init_state=state,
             dyn_param=dyn_param,
             q=q0,
+            outer_steps=outer_steps,
             lr=lr,
             iters=pg_iters,
         )
@@ -66,6 +73,7 @@ def main():
         print(f"  q init: {q0}")
         print(f"  outer loss: {loss:.6f}")
         print(f"  grad q: {grad_q}")
+        print(f"  outer_steps: {outer_steps}, inner_TK: {cfg.TK}")
         print(f"  q updated ({pg_iters} iters): {q_new}\n")
 
 

@@ -114,8 +114,8 @@ def objective_value_and_grad_mpc_param(
         e_lag2.append(e_lag ** 2)
         dtheta.append(max(0.0, theta_next - theta_t))
 
-    e_con2       = jnp.asarray(e_con2)
-    e_lag2       = jnp.asarray(e_lag2)
+    e_con2     = jnp.asarray(e_con2)
+    e_lag2     = jnp.asarray(e_lag2)
     dtheta     = jnp.asarray(dtheta)
     action_reg = 1e-3 * jnp.sum(actions[:, 0] ** 2 + actions[:, 1] ** 2)
 

@@ -19,6 +19,7 @@ from DiffMPCC.MPCCsolver import (
 class CasadiOuterSensitivityMPCC:
     """
     MPCC + KKT sensitivity for d(outer_loss)/dq where q=[q_contour, q_lag, q_theta].
+    https://web.casadi.org/blog/nlp_sens/
 
     Notes:
     - Uses equality-constrained KKT sensitivity. Active bound multipliers are not included,
@@ -88,10 +89,10 @@ class CasadiOuterSensitivityMPCC:
         NU = self.config.NU
         TK = self.config.TK
 
-        xk = ca.MX.sym("xk", NXK, TK + 1)
-        uk = ca.MX.sym("uk", NU, TK)
+        xk      = ca.MX.sym("xk", NXK, TK + 1)
+        uk      = ca.MX.sym("uk", NU, TK)
         theta_k = ca.MX.sym("theta_k", TK + 1)
-        vik = ca.MX.sym("vik", TK)
+        vik     = ca.MX.sym("vik", TK)
 
         x0k = ca.MX.sym("x0k", NXK)
         theta0 = ca.MX.sym("theta0")
@@ -162,13 +163,15 @@ class CasadiOuterSensitivityMPCC:
 
             inner_objective += q[0] * e_c ** 2 + q[1] * e_l ** 2
             # Fixed outer objective to learn q from trajectory quality.
-            outer_objective += e_c ** 2 + e_l ** 2
+            # Define outer objective as trajectory tracking error, independent of q directly.
+            outer_objective += e_c ** 2 + e_l ** 2 # Change by your design
 
         for t in range(TK):
             inner_objective += -q[2] * vik[t]
-            u_aug = ca.vertcat(uk[0, t], uk[1, t], vik[t])
+            u_aug            = ca.vertcat(uk[0, t], uk[1, t], vik[t])
             inner_objective += ca.mtimes([u_aug.T, self.config.Rk_ca, u_aug])
-            outer_objective += 1e-3 * (uk[0, t] ** 2 + uk[1, t] ** 2)
+            # Define outer objective to also include control effort, which can influence the optimal trajectory and thus provide a learning signal for q.
+            outer_objective += 1e-3 * (uk[0, t] ** 2 + uk[1, t] ** 2) # Change by your design
 
         for t in range(TK - 1):
             du_aug = ca.vertcat(uk[0, t + 1] - uk[0, t], uk[1, t + 1] - uk[1, t], vik[t + 1] - vik[t])
@@ -207,18 +210,18 @@ class CasadiOuterSensitivityMPCC:
         self.lbg = np.asarray(lbg, dtype=float)
         self.ubg = np.asarray(ubg, dtype=float)
 
-        lam_g = ca.MX.sym("lam_g", self.ng)
+        lam_g      = ca.MX.sym("lam_g", self.ng) # Lagrange multipliers for equality constraints
         lagrangian = inner_objective + ca.dot(lam_g, g)
-        r_kkt = ca.vertcat(ca.gradient(lagrangian, z), g)
-        w = ca.vertcat(z, lam_g)
+        r_kkt      = ca.vertcat(ca.gradient(lagrangian, z), g) # KKT residuals: [dL/dz; g(z,p)]
+        w          = ca.vertcat(z, lam_g)
 
-        Jw = ca.jacobian(r_kkt, w)
+        Jw = ca.jacobian(r_kkt, w) 
         Jp = ca.jacobian(r_kkt, p)
 
         douter_dz = ca.jacobian(outer_objective, z)
         douter_dp = ca.jacobian(outer_objective, p)
 
-        self.kkt_jac_fun = ca.Function("kkt_jac_fun", [z, lam_g, p], [Jw, Jp])
+        self.kkt_jac_fun    = ca.Function("kkt_jac_fun", [z, lam_g, p], [Jw, Jp])
         self.outer_grad_fun = ca.Function("outer_grad_fun", [z, p], [outer_objective, douter_dz, douter_dp])
 
     def _build_bounds(self):
@@ -252,7 +255,7 @@ class CasadiOuterSensitivityMPCC:
         )
 
         lbx.extend([self.config.MAX_DECEL * self.config.MASS, -self.config.MAX_STEER_V] * TK)
-        ubx.extend([self.config.MAX_ACCEL * self.config.MASS, self.config.MAX_STEER_V] * TK)
+        ubx.extend([self.config.MAX_ACCEL * self.config.MASS,  self.config.MAX_STEER_V] * TK)
 
         lbx.extend([self.config.MIN_THETA] * (TK + 1))
         ubx.extend([self.config.MAX_THETA] * (TK + 1))
@@ -281,7 +284,7 @@ class CasadiOuterSensitivityMPCC:
             p  =p_vec,
         )
 
-        z_star = np.asarray(sol["x"], dtype=float).reshape(-1)
+        z_star     = np.asarray(sol["x"], dtype=float).reshape(-1)
         lam_g_star = np.asarray(sol["lam_g"], dtype=float).reshape(-1)
 
         self.init_sol = z_star.copy()
@@ -298,7 +301,7 @@ class CasadiOuterSensitivityMPCC:
     def outer_loss_and_grad_q(self, init_state, dyn_param, q, theta0=None):
         out = self.solve(init_state, dyn_param, q, theta0=theta0)
 
-        z = out["z"]
+        z     = out["z"]
         lam_g = out["lam_g"]
         p_vec = out["p"]
 
@@ -324,11 +327,95 @@ class CasadiOuterSensitivityMPCC:
 
     def gradient_step_q(self, init_state, dyn_param, q, lr=1e-3, iters=1):
         q_curr = np.asarray(q, dtype=float).reshape(-1)
-        loss = 0.0
+        loss   = 0.0
         grad_q = np.zeros_like(q_curr)
 
         for _ in range(int(iters)):
             loss, grad_q, _ = self.outer_loss_and_grad_q(init_state, dyn_param, q_curr)
+            q_curr = np.maximum(q_curr - lr * grad_q, 1e-6)
+
+        return q_curr, float(loss), grad_q
+
+    def _unpack_solution(self, z):
+        NXK = self.config.NXK
+        NU = self.config.NU
+        TK = self.config.TK
+
+        idx = 0
+        n_states = NXK * (TK + 1)
+        states = np.asarray(z[idx : idx + n_states], dtype=float).reshape(TK + 1, NXK)
+        idx += n_states
+
+        n_controls = NU * TK
+        controls = np.asarray(z[idx : idx + n_controls], dtype=float).reshape(TK, NU)
+        idx += n_controls
+
+        theta_seq = np.asarray(z[idx : idx + (TK + 1)], dtype=float)
+        idx += TK + 1
+        vi_seq = np.asarray(z[idx : idx + TK], dtype=float)
+        return states, controls, theta_seq, vi_seq
+
+    def outer_loss_and_grad_q_closed_loop(self, init_state, dyn_param, q, outer_steps):
+        """
+        Closed-loop outer objective with horizon `outer_steps`.
+
+        Each outer step solves a TK-horizon inner MPC, accumulates sensitivity
+        gradient wrt q, then advances to the next state using the first predicted state.
+        """
+        state = np.asarray(init_state, dtype=float).reshape(-1)
+        q_np = np.asarray(q, dtype=float).reshape(-1)
+        total_loss = 0.0
+        total_grad_q = np.zeros(3, dtype=float)
+
+        theta0 = self.look_theta.query(float(state[0]), float(state[1]), k_neighbors=n_neighbors)
+
+        for _ in range(int(outer_steps)): # Loop over outer steps
+            out = self.solve(state, dyn_param, q_np, theta0=theta0)
+            if not out["success"]:
+                break
+
+            z     = out["z"]
+            lam_g = out["lam_g"]
+            p_vec = out["p"]
+
+            Jw, Jp = self.kkt_jac_fun(z, lam_g, p_vec)
+            Jw = np.asarray(Jw, dtype=float)
+            Jp = np.asarray(Jp, dtype=float)
+
+            try:
+                dw_dp = -np.linalg.solve(Jw, Jp)
+            except np.linalg.LinAlgError:
+                dw_dp = -np.linalg.lstsq(Jw, Jp, rcond=None)[0]
+
+            dz_dp = dw_dp[: self.nz, :]
+
+            outer_loss, douter_dz, douter_dp = self.outer_grad_fun(z, p_vec)
+            douter_dz = np.asarray(douter_dz, dtype=float)
+            douter_dp = np.asarray(douter_dp, dtype=float)
+            grad_p    = douter_dp + douter_dz @ dz_dp
+            grad_q    = grad_p[0, self.p_q_start : self.p_q_start + 3]
+
+            total_loss   += float(outer_loss)
+            total_grad_q += grad_q
+
+            states, _, theta_seq, _ = self._unpack_solution(z)
+            state  = states[1].copy()
+            theta0 = float(theta_seq[1])
+
+        return float(total_loss), total_grad_q
+
+    def gradient_step_q_closed_loop(self, init_state, dyn_param, q, outer_steps, lr=1e-3, iters=1):
+        q_curr = np.asarray(q, dtype=float).reshape(-1)
+        loss = 0.0
+        grad_q = np.zeros_like(q_curr)
+
+        for _ in range(int(iters)):
+            loss, grad_q = self.outer_loss_and_grad_q_closed_loop(
+                init_state=init_state,
+                dyn_param=dyn_param,
+                q=q_curr,
+                outer_steps=outer_steps,
+            )
             q_curr = np.maximum(q_curr - lr * grad_q, 1e-6)
 
         return q_curr, float(loss), grad_q
