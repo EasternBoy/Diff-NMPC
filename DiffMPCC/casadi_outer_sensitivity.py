@@ -94,10 +94,10 @@ class CasadiOuterSensitivityMPCC:
         theta_k = ca.MX.sym("theta_k", TK + 1)
         vik     = ca.MX.sym("vik", TK)
 
-        x0k = ca.MX.sym("x0k", NXK)
+        x0k    = ca.MX.sym("x0k", NXK)
         theta0 = ca.MX.sym("theta0")
-        dyn = ca.MX.sym("dyn", self.config.num_param)
-        q = ca.MX.sym("q", 3)
+        dyn    = ca.MX.sym("dyn", self.config.num_param)
+        q      = ca.MX.sym("q", 3)
 
         theta_grid = np.asarray(theta, dtype=float)
         x_grid = np.asarray(x, dtype=float)

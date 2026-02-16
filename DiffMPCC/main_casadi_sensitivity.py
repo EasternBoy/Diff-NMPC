@@ -31,9 +31,9 @@ def main():
     VY = jnp.array(data["vy"])
     STR_angle = jnp.array(data["steer_angle"])
 
-    n_samples   = 100  # Number of samples to run sensitivity
+    n_samples   = 2  # Number of samples to run sensitivity
     outer_steps = 40   # Outer rollout horizon (can be > cfg.TK)
-    pg_iters    = 10   # Number of projected gradient steps to take on q in each outer iteration
+    pg_iters    = 200   # Number of projected gradient steps to take on q in each outer iteration
     lr          = 1e-1 # Learning rate for projected gradient step on q
 
     for index in range(n_samples):
