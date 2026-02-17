@@ -603,11 +603,11 @@ class STMPCCPlannerCasadi:
         is_successful  = solver_stats['success']
         status_message = solver_stats['return_status']
 
-        # if is_successful:
-        #     iterations = solver_stats['iter_count']
-        #     print(f"Solver succeeded with status: {status_message} in {iterations} iterations")
-        # else:
-        #     print(f"Solver failed with status: {status_message}")
+        if is_successful:
+            iterations = solver_stats['iter_count']
+            print(f"Solver succeeded with status: {status_message} in {iterations} iterations")
+        else:
+            print(f"Solver failed with status: {status_message}")
 
         return sol['x'].full().flatten(), is_successful
             

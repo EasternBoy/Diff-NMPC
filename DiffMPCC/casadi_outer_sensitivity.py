@@ -1,7 +1,7 @@
 import casadi as ca
 import numpy as np
 
-from MPCCsolver import (
+from DiffMPCC.MPCCsolver import (
     MPCConfigDYN,
     ThetaLookupTable,
     lookup_phi,
@@ -290,6 +290,16 @@ class CasadiOuterSensitivityMPCC:
             p  =p_vec,
         )
 
+        # solver_stats   = self.solver.stats()
+        # is_successful  = solver_stats['success']
+        # status_message = solver_stats['return_status']
+
+        # if is_successful:
+        #     iterations = solver_stats['iter_count']
+        #     print(f"Solver succeeded with status: {status_message} in {iterations} iterations")
+        # else:
+        #     print(f"Solver failed with status: {status_message}")
+
         z_star     = np.asarray(sol["x"], dtype=float).reshape(-1)
         lam_g_star = np.asarray(sol["lam_g"], dtype=float).reshape(-1)
 
@@ -422,6 +432,6 @@ class CasadiOuterSensitivityMPCC:
                 q=q_curr,
                 outer_steps=outer_steps,
             )
-            q_curr = np.maximum(q_curr - lr * grad_q, 1e-6)
+            q_curr = q_curr - lr * grad_q
 
         return q_curr, float(loss), grad_q

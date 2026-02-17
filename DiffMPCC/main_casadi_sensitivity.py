@@ -33,10 +33,10 @@ def main():
 
     n_samples   = 2  # Number of samples to run sensitivity
     outer_steps = 40   # Outer rollout horizon (can be > cfg.TK)
-    pg_iters    = 200   # Number of projected gradient steps to take on q in each outer iteration
+    pg_iters    = 10   # Number of projected gradient steps to take on q in each outer iteration
     lr          = 1e-1 # Learning rate for projected gradient step on q
 
-    for index in range(n_samples):
+    for index in range(1100,len(X)):
         state = np.array(
             [X[index], Y[index], VX[index], Yaw[index], VY[index], Yaw_rate[index], STR_angle[index]],
             dtype=float,
@@ -68,8 +68,9 @@ def main():
             lr=lr,
             iters=pg_iters,
         )
-
-        print(f"index={index}")
+        state_str = np.array2string(state, formatter={"float_kind": lambda x: f"{x:.2f}"})
+        dyn_param_str = np.array2string(dyn_param, formatter={"float_kind": lambda x: f"{x:.2f}"})
+        print(f"index={index}, state={state_str}, dyn_param={dyn_param_str}")
         print(f"  q init: {q0}")
         print(f"  outer loss: {loss:.6f}")
         print(f"  grad q: {grad_q}")
