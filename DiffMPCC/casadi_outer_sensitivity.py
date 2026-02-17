@@ -1,7 +1,7 @@
 import casadi as ca
 import numpy as np
 
-from DiffMPCC.MPCCsolver import (
+from MPCCsolver import (
     MPCConfigDYN,
     ThetaLookupTable,
     lookup_phi,
@@ -158,6 +158,12 @@ class CasadiOuterSensitivityMPCC:
 
             dx = xk[0, t] - x_ref
             dy = xk[1, t] - y_ref
+
+            dxy = ca.sqrt(dx**2 + dy**2)
+            constraints.append(dxy)
+            lbg.append(0.0)
+            ubg.append(2.5)
+
             e_c = ca.sin(phi_t) * dx - ca.cos(phi_t) * dy
             e_l = -ca.cos(phi_t) * dx - ca.sin(phi_t) * dy
 
