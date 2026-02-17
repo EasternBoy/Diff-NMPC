@@ -170,14 +170,16 @@ class CasadiOuterSensitivityMPCC:
             inner_objective += q[0] * e_c ** 2 + q[1] * e_l ** 2
             # Fixed outer objective to learn q from trajectory quality.
             # Define outer objective as trajectory tracking error, independent of q directly.
-            outer_objective += e_c ** 2 + e_l ** 2 # Change by your design
-
+            outer_objective += e_c ** 2 + 2000*e_l ** 2 # Change by your design
+            # 
         for t in range(TK):
             inner_objective += -q[2] * vik[t]
             u_aug            = ca.vertcat(uk[0, t], uk[1, t], vik[t])
             inner_objective += ca.mtimes([u_aug.T, self.config.Rk_ca, u_aug])
             # Define outer objective to also include control effort, which can influence the optimal trajectory and thus provide a learning signal for q.
-            outer_objective += 1e-3 * (uk[0, t] ** 2 + uk[1, t] ** 2) # Change by your design
+            # outer_objective += 1e-3 * (uk[0, t] ** 2 + uk[1, t] ** 2) # Change by your design
+
+            outer_objective += -100*vik[t]
 
         for t in range(TK - 1):
             du_aug = ca.vertcat(uk[0, t + 1] - uk[0, t], uk[1, t + 1] - uk[1, t], vik[t + 1] - vik[t])
@@ -289,6 +291,14 @@ class CasadiOuterSensitivityMPCC:
             ubg=self.ubg,
             p  =p_vec,
         )
+
+         
+        solver_stats = self.solver.stats()
+        is_successful = solver_stats['success']
+        status_message = solver_stats['return_status']
+
+        # if is_successful:
+            # print(f"Solver succeeded with status: {status_message}")
 
         z_star     = np.asarray(sol["x"], dtype=float).reshape(-1)
         lam_g_star = np.asarray(sol["lam_g"], dtype=float).reshape(-1)
