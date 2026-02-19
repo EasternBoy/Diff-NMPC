@@ -1,10 +1,10 @@
 import json
 
-ec = 20.0
+ec = 30.0
 el = 3000.0
 ep = 100.0
 
-filename = f"data/log_full_Vinit_8.0_c{ec}_l{el}_p{ep}_weightslip0.5_thetaslip_100_150_290_310_non"
+filename = f"data/scale0.25_log_Oschersleben_full_Vinit_6.0_c30.0_l3000.0_p100.0_friction1.2_weight1.0_slip_100_150_350_450_800_900"
 
 # 1. Load existing dict
 with open(filename, "r") as f:
