@@ -14,7 +14,7 @@ import time
 import json
 
 
-data = pd.read_csv("data/scale0.25_Oschersleben_waypoints.csv")
+data = pd.read_csv("scale0.25_Oschersleben_waypoints.csv")
 df = data[["X", "Y"]].copy()
 
 x = onp.asarray(df["X"].to_numpy(), dtype=float)
@@ -65,25 +65,82 @@ class ThetaLookupTable:
             theta_weighted = jnp.sum(self.theta_samples[indices[0]] * weights)
             return float(theta_weighted)
     
-    def query_batch(self, x_queries, y_queries, k_neighbors=1):
-        query_points = onp.column_stack([onp.asarray(x_queries), onp.asarray(y_queries)])
-        
-        if k_neighbors == 1:
-            distances, indices = self.kdtree.query(query_points)
-            return self.theta_samples[indices].astype(float)
-        else:
-            distances, indices = self.kdtree.query(query_points, k=k_neighbors)
-            # Weighted average for each query point
-            thetas = []
-            for i in range(len(query_points)):
-                weights = 1.0 / (jnp.asarray(distances[i]) + 1e-10)
-                weights /= weights.sum()
-                theta_weighted = jnp.sum(self.theta_samples[indices[i]] * weights)
-                thetas.append(theta_weighted)
-            return jnp.asarray(thetas)
-        
+    def query_near_prev(
+        self,
+        x_query,
+        y_query,
+        theta_prev,
+        k_neighbors=50,
+        forward_only=True,
+        max_forward_step=None,
+        ):
+        """
+        Continuous theta projection with continuity constraints:
+        minimize geometric distance to the path while staying near theta_prev.
+        """
+        query_point = onp.array([[x_query, y_query]])
+        distances, indices = self.kdtree.query(query_point, k=max(1, int(k_neighbors)))
+        idx = onp.atleast_1d(indices[0]).astype(int)
+        dists = onp.atleast_1d(distances[0]).astype(float)
+        theta_candidates = self.theta_samples[idx].astype(float)
 
-find_theta = ThetaLookupTable(spline_x, spline_y, theta_min, theta_max, n_samples=1000000)   
+        L = self.track_length
+        k = onp.round((theta_prev - theta_candidates) / L)
+        theta_cont = theta_candidates + k * L
+
+        if forward_only:
+            theta_cont = onp.where(theta_cont < theta_prev, theta_cont + L, theta_cont)
+
+        feasible = onp.arange(theta_cont.size)
+        if forward_only and max_forward_step is not None:
+            feasible = onp.where(theta_cont <= (theta_prev + float(max_forward_step)))[0]
+            if feasible.size == 0:
+                # No candidate in window -> clamp progress.
+                return float(theta_prev + float(max_forward_step))
+
+        # Primary criterion is geometric distance; tiny progress penalty breaks ties.
+        score = dists[feasible] + 1e-6 *onp.abs(theta_cont[feasible] - theta_prev)
+        seed = float(theta_cont[feasible[onp.argmin(score)]])
+
+        # Local continuous refinement around seed.
+        span = 2.0
+        lo = seed - span
+        hi = seed + span
+        if forward_only:
+            lo = max(lo, theta_prev)
+            if max_forward_step is not None:
+                hi = min(hi, theta_prev + float(max_forward_step))
+        if hi <= lo:
+            return float(seed)
+
+        def dist2(th):
+            xb = float(self.spline_x(th))
+            yb = float(self.spline_y(th))
+            dx = xb - x_query
+            dy = yb - y_query
+            return dx * dx + dy * dy
+
+        res = minimize_scalar(dist2, bounds=(lo, hi), method='bounded')
+        return float(res.x if res.success else seed)
+    
+    # def query_batch(self, x_queries, y_queries, k_neighbors=1):
+    #     query_points = onp.column_stack([onp.asarray(x_queries), onp.asarray(y_queries)])
+        
+    #     if k_neighbors == 1:
+    #         distances, indices = self.kdtree.query(query_points)
+    #         return self.theta_samples[indices].astype(float)
+    #     else:
+    #         distances, indices = self.kdtree.query(query_points, k=k_neighbors)
+    #         # Weighted average for each query point
+    #         thetas = []
+    #         for i in range(len(query_points)):
+    #             weights = 1.0 / (jnp.asarray(distances[i]) + 1e-10)
+    #             weights /= weights.sum()
+    #             theta_weighted = jnp.sum(self.theta_samples[indices[i]] * weights)
+    #             thetas.append(theta_weighted)
+    #         return jnp.asarray(thetas)
+        
+find_theta = ThetaLookupTable(spline_x, spline_y, theta_min, theta_max, n_samples=10000000)   
 
 def lookup_xy(theta_query):
     return float(spline_x(theta_query)), float(spline_y(theta_query))
@@ -98,7 +155,7 @@ def lookup_phi(theta_query):
 class MPCConfigDYN:
     NXK: int = 7  # length of kinematic state vector: z = [x, y, vx, yaw angle, vy, yaw rate, steering angle]
     NU: int = 2   # length of input vector: u = = [acceleration, steering speed]
-    TK: int = 20  # finite time horizon length kinematic
+    TK: int = 30  # finite time horizon length kinematic
     '''
     Parameters for MPCC objective
     '''
@@ -107,9 +164,9 @@ class MPCConfigDYN:
     Rdk_ca: list = field(
         default_factory=lambda: onp.diag([0.01, 2.0, 0.01]))  # input difference cost matrix, penalty for change of inputs - [accel, steering_speed, vi_speed]
 
-    q_contour: float = 20.0
+    q_contour: float = 30.0
     q_lag: float     = 3000.0
-    q_theta: float   = 150.0
+    q_theta: float   = 100.0
 
     '''
     Learning parameters for predictive model
@@ -174,11 +231,12 @@ class STMPCCPlannerCasadi:
         self.TORQUE_SPLIT = self.config.TORQUE_SPLIT
         self.CR0   = self.config.CR0
         self.CR2   = self.config.CR2
+        self.theta_prev = float(self.theta_min)
         self.u_his = onp.array([0., 0.])
 
 
         if init_state is None:
-            self.init_state = jnp.array([waypoints[1, 1], waypoints[1, 2], 8.0, 0.0 , 0.0, 0.0, waypoints[1, 3]])
+            self.init_state = jnp.array([waypoints[1, 1], waypoints[1, 2], 6.0, 0.0 , 0.0, 0.0, waypoints[1, 3]])
         else:
             self.init_state = jnp.asarray(init_state, dtype=float)
 
@@ -254,10 +312,6 @@ class STMPCCPlannerCasadi:
         self.DF = param[5]
         self.CM = param[6]
 
-
-
-
-
         state = self.clip_output(state)
         control_input = self.clip_input(control_input)
         
@@ -332,8 +386,15 @@ class STMPCCPlannerCasadi:
         # Compute theta from path lookup and unwrap for continuity
         theta_lookup = onp.zeros(self.config.TK + 1, dtype=float)
 
-        for t in range(self.config.TK + 1):
-            theta_lookup[t] = self.look_theta.query(states[0, t], states[1, t], k_neighbors=5)
+        for t in range(1, self.config.TK + 1):
+            theta_lookup[t] = self.look_theta.query_near_prev(
+                states[0, t],
+                states[1, t],
+                theta_lookup[t - 1],
+                k_neighbors=50,
+                forward_only=True,
+                max_forward_step=8.0,
+            )
 
         theta_unwrap = onp.zeros_like(theta_lookup)
         theta_unwrap[0] = theta_lookup[0]
@@ -452,7 +513,7 @@ class STMPCCPlannerCasadi:
             constraints.append(dxy)
             lbg.append(0.0)
             ubg.append(3.5)
-            
+
             # Contouring error (perpendicular to path)
             e_c = sin_phi_t * dx - cos_phi_t * dy
             # Lag error (along path)
@@ -517,7 +578,7 @@ class STMPCCPlannerCasadi:
 
         opts = {
             'ipopt.print_level': 0,
-            'ipopt.max_iter': 200,  # Reduce iterations
+            'ipopt.max_iter': 5000,  # Reduce iterations
             'ipopt.tol': 1e-2,  # Relax tolerance
             'ipopt.warm_start_init_point': 'yes',
             'ipopt.mu_strategy': 'adaptive',
@@ -618,11 +679,11 @@ class STMPCCPlannerCasadi:
         is_successful  = solver_stats['success']
         status_message = solver_stats['return_status']
 
-        if is_successful:
-            iterations = solver_stats['iter_count']
-            print(f"Solver succeeded with status: {status_message} in {iterations} iterations")
-        else:
-            print(f"Solver failed with status: {status_message}")
+        # if is_successful:
+        #     iterations = solver_stats['iter_count']
+        #     print(f"Solver succeeded with status: {status_message} in {iterations} iterations")
+        # else:
+        #     print(f"Solver failed with status: {status_message}")
 
         return sol['x'].full().flatten(), is_successful
             

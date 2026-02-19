@@ -18,13 +18,13 @@ def main():
     CasadiOuterSensitivityMPCC_high_VY = cos.CasadiOuterSensitivityMPCC_high_VY
     CasadiOuterSensitivityMPCC_low_VY = cos.CasadiOuterSensitivityMPCC_low_VY
     with open(
-        "data/scale0.25_TK30_log_Oschersleben_full_Vinit_6.0_c30.0_l3000.0_p100.0_friction1.2_weight1.0_slip_100_150_350_450_800_900_non",
+        "scale0.25_TK30_log_Oschersleben_full_Vinit_6.0_c30.0_l3000.0_p100.0_friction1.2_weight1.0_slip_100_150_350_450_800_900_non",
         "r",
     ) as f:
         data = json.load(f)
 
     cfg = MPCConfigDYN()
-    cfg.TK = 30  # Inner MPC horizon
+    cfg.TK = 20  # Inner MPC horizon
 
     sens_mpcc_h = CasadiOuterSensitivityMPCC_high_VY(cfg)
     sens_mpcc_l = CasadiOuterSensitivityMPCC_low_VY(cfg)
@@ -37,15 +37,17 @@ def main():
     VY = jnp.array(data["vy"])
     STR_angle = jnp.array(data["steer_angle"])
     theta = jnp.array(data["theta"])
-    n_samples   = len(data) # Number of samples to run sensitivity
-    outer_steps = 60   # Outer rollout horizon (can be > cfg.TK)
+    n_samples   = len(X) # Number of samples to run sensitivity
+    outer_steps = 30   # Outer rollout horizon (can be > cfg.TK)
     pg_iters    = 1 # Number of projected gradient steps to take on q in each outer iteration
-    lr          = 5e-1 # Learning rate for projected gradient step on q
+    lr          = 5 # Learning rate for projected gradient step on q
     index_start = 1
     # time_pl = jnp.array(data["time"])
     # plt.plot(time_pl, VY)
     # plt.show()
     # return 0
+
+    print("n_sample:", n_samples)
     for index in range(n_samples):
         index += index_start
         start = time.time()
@@ -97,7 +99,7 @@ def main():
                 iters=pg_iters,
             )
 
-        print(f"index={index}")
+        print(f"index={index}/{n_samples}")
         print(f"Parameters: BR {data['BR'][index]}, DR {data['DR'][index]}")
         print(f"positions X: {X[index]}; Y: {Y[index]}")
         print(f"  q init: {q0}")
@@ -135,8 +137,8 @@ def main():
         log['q_lag_next'].append(float(q_new[1]))
         log['q_theta_next'].append(float(q_new[2]))
    
-        with open(f'main_data_adaptive_n_sample{n_samples}_outer_steps{outer_steps}_pg_iters{pg_iters}_lr{lr}', 'w') as f:
-            json.dump(log, f)
+    with open(f'main_data_adaptive_n_sample{n_samples}_outer_steps{outer_steps}_pg_iters{pg_iters}_lr{lr}', 'w') as f:
+        json.dump(log, f)
 
 if __name__ == "__main__":
     main()

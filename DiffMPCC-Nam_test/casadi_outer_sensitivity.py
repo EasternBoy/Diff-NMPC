@@ -308,7 +308,7 @@ class CasadiOuterSensitivityMPCC_high_VY:
 
         # if is_successful:
         # print(f"Solver succeeded with status: {status_message}")
-        print(f"Solver status: {status_message}")
+        # print(f"Solver status: {status_message}")
 
         z_star     = np.asarray(sol["x"], dtype=float).reshape(-1)
         lam_g_star = np.asarray(sol["lam_g"], dtype=float).reshape(-1)
@@ -752,7 +752,7 @@ class CasadiOuterSensitivityMPCC_low_VY:
 
         # if is_successful:
         # print(f"Solver succeeded with status: {status_message}")
-        print(f"Solver status: {status_message}")
+        # print(f"Solver status: {status_message}")
 
         z_star     = np.asarray(sol["x"], dtype=float).reshape(-1)
         lam_g_star = np.asarray(sol["lam_g"], dtype=float).reshape(-1)
