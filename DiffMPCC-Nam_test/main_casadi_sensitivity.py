@@ -2,6 +2,7 @@ import json
 import importlib
 import numpy as np
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 
 from MPCCsolver import MPCConfigDYN
 import casadi_outer_sensitivity as cos
@@ -14,10 +15,10 @@ def main():
             'BR': [], 'CR': [], 'DR': [], 'BF': [], 'CF': [], 'DF': [], 'CM': [], 'mu_x': [], 'mu_y': [],
             'q_contour_cur': [], 'q_lag_cur': [], 'q_theta_cur': [], 'q_contour_next': [], 'q_lag_next': [], 'q_theta_next': []}
     importlib.reload(cos)
-    CasadiOuterSensitivityMPCC = cos.CasadiOuterSensitivityMPCC
-
+    CasadiOuterSensitivityMPCC_high_VY = cos.CasadiOuterSensitivityMPCC_high_VY
+    CasadiOuterSensitivityMPCC_low_VY = cos.CasadiOuterSensitivityMPCC_low_VY
     with open(
-        "data/scale0.25_log_Oschersleben_full_Vinit_6.0_c30.0_l3000.0_p100.0_friction1.2_weight1.0_slip_100_150_350_450_800_900",
+        "data/scale0.25_TK30_log_Oschersleben_full_Vinit_6.0_c30.0_l3000.0_p100.0_friction1.2_weight1.0_slip_100_150_350_450_800_900_non",
         "r",
     ) as f:
         data = json.load(f)
@@ -25,7 +26,8 @@ def main():
     cfg = MPCConfigDYN()
     cfg.TK = 30  # Inner MPC horizon
 
-    sens_mpcc = CasadiOuterSensitivityMPCC(cfg)
+    sens_mpcc_h = CasadiOuterSensitivityMPCC_high_VY(cfg)
+    sens_mpcc_l = CasadiOuterSensitivityMPCC_low_VY(cfg)
 
     X = jnp.array(data["x"])
     Y = jnp.array(data["y"])
@@ -34,11 +36,16 @@ def main():
     VX = jnp.array(data["vx"])
     VY = jnp.array(data["vy"])
     STR_angle = jnp.array(data["steer_angle"])
-    n_samples   = 1  # Number of samples to run sensitivity
-    outer_steps = 100   # Outer rollout horizon (can be > cfg.TK)
-    pg_iters    = 5 # Number of projected gradient steps to take on q in each outer iteration
-    lr          = 2e-1 # Learning rate for projected gradient step on q
-    index_start = 0
+    theta = jnp.array(data["theta"])
+    n_samples   = len(data) # Number of samples to run sensitivity
+    outer_steps = 60   # Outer rollout horizon (can be > cfg.TK)
+    pg_iters    = 1 # Number of projected gradient steps to take on q in each outer iteration
+    lr          = 5e-1 # Learning rate for projected gradient step on q
+    index_start = 1
+    # time_pl = jnp.array(data["time"])
+    # plt.plot(time_pl, VY)
+    # plt.show()
+    # return 0
     for index in range(n_samples):
         index += index_start
         start = time.time()
@@ -46,7 +53,7 @@ def main():
             [X[index], Y[index], VX[index], Yaw[index], VY[index], Yaw_rate[index], STR_angle[index]],
             dtype=float,
         )
-
+        theta_in = theta[index]
         dyn_param = np.array(
             [
                 data["BR"][index],
@@ -65,14 +72,30 @@ def main():
             dtype=float,
         )
 
-        q_new, loss, grad_q = sens_mpcc.gradient_step_q_closed_loop(
-            init_state=state,
-            dyn_param=dyn_param,
-            q=q0,
-            outer_steps=outer_steps,
-            lr=lr,
-            iters=pg_iters,
-        )
+        thresh_hold = jnp.absolute(VY[index]) < 0.35
+
+        print("thresh_hold:", thresh_hold)
+        # gradient_step_q_closed_loop(self, init_state, theta_in, dyn_param, q, outer_steps, lr=1e-3, iters=1)
+        if thresh_hold:
+            q_new, loss, grad_q = sens_mpcc_h.gradient_step_q_closed_loop(
+                init_state=state,
+                theta_in=theta_in,
+                dyn_param=dyn_param,
+                q=q0,
+                outer_steps=outer_steps,
+                lr=lr,
+                iters=pg_iters,
+            )
+        else:
+            q_new, loss, grad_q = sens_mpcc_l.gradient_step_q_closed_loop(
+                init_state=state,
+                theta_in=theta_in,
+                dyn_param=dyn_param,
+                q=q0,
+                outer_steps=outer_steps,
+                lr=lr,
+                iters=pg_iters,
+            )
 
         print(f"index={index}")
         print(f"Parameters: BR {data['BR'][index]}, DR {data['DR'][index]}")
