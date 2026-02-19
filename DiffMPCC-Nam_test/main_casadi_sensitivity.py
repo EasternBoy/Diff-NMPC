@@ -41,7 +41,7 @@ def main():
     outer_steps = 30   # Outer rollout horizon (can be > cfg.TK)
     pg_iters    = 1 # Number of projected gradient steps to take on q in each outer iteration
     lr          = 5 # Learning rate for projected gradient step on q
-    index_start = 1
+    index_start = 180
     # time_pl = jnp.array(data["time"])
     # plt.plot(time_pl, VY)
     # plt.show()
