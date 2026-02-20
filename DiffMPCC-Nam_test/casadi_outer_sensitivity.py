@@ -15,7 +15,7 @@ from MPCCsolver import (
     y,
 )
 
-
+normal_constant = 30
 class CasadiOuterSensitivityMPCC_high_VY:
     """
     MPCC + KKT sensitivity for d(outer_loss)/dq where q=[q_contour, q_lag, q_theta].
@@ -180,12 +180,12 @@ class CasadiOuterSensitivityMPCC_high_VY:
             # Define outer objective to also include control effort, which can influence the optimal trajectory and thus provide a learning signal for q.
             outer_objective +=  (5e-4 *uk[0, t] ** 2 + 0.01*uk[1, t] ** 2) # Change by your design
 
-            outer_objective += -120*vik[t]
+            outer_objective += -150*vik[t]
 
         for t in range(TK - 1):
             du_aug = ca.vertcat(uk[0, t + 1] - uk[0, t], uk[1, t + 1] - uk[1, t], vik[t + 1] - vik[t])
             inner_objective += ca.mtimes([du_aug.T, self.config.Rdk_ca, du_aug])
-
+        inner_objective /= normal_constant 
         constraints.append(xk[:, 0] - x0k)
         lbg.extend([0.0] * NXK)
         ubg.extend([0.0] * NXK)
@@ -624,11 +624,13 @@ class CasadiOuterSensitivityMPCC_low_VY:
             # Define outer objective to also include control effort, which can influence the optimal trajectory and thus provide a learning signal for q.
             outer_objective +=  (5e-4 *uk[0, t] ** 2 + 0.01*uk[1, t] ** 2) # Change by your design
 
-            outer_objective += -8*vik[t]
+            outer_objective += -1e-2*vik[t]
 
         for t in range(TK - 1):
             du_aug = ca.vertcat(uk[0, t + 1] - uk[0, t], uk[1, t + 1] - uk[1, t], vik[t + 1] - vik[t])
             inner_objective += ca.mtimes([du_aug.T, self.config.Rdk_ca, du_aug])
+        
+        inner_objective /= normal_constant 
 
         constraints.append(xk[:, 0] - x0k)
         lbg.extend([0.0] * NXK)
@@ -795,14 +797,15 @@ class CasadiOuterSensitivityMPCC_low_VY:
 
         return float(outer_loss), grad_q, out
 
-    def gradient_step_q(self, init_state, dyn_param, q, lr=1e-3, iters=1):
+    def gradient_step_q(self, init_state, dyn_param, q, lr=0.1, iters=10):
         q_curr = np.asarray(q, dtype=float).reshape(-1)
         loss   = 0.0
         grad_q = np.zeros_like(q_curr)
 
         for _ in range(int(iters)):
             loss, grad_q, _ = self.outer_loss_and_grad_q(init_state, dyn_param, q_curr)
-            q_curr = np.maximum(q_curr - lr * grad_q, 1e-6)
+            # q_curr = np.maximum(q_curr - lr * grad_q, 1e-6)
+            q_curr -= lr * grad_q
 
         return q_curr, float(loss), grad_q
 
@@ -896,6 +899,6 @@ class CasadiOuterSensitivityMPCC_low_VY:
                 q=q_curr,
                 outer_steps=outer_steps,
             )
-            q_curr = np.maximum(q_curr - lr * grad_q, 1e-6)
-
+            # q_curr = np.maximum(q_curr - lr * grad_q, 1e-6)
+            q_curr -= lr * grad_q
         return q_curr, float(loss), grad_q
