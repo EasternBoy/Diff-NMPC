@@ -1,48 +1,51 @@
 from pathlib import Path
 import json
+import numpy as np
+
+
+def load_log(path: str) -> dict:
+    with open(path, "r") as f:
+        return json.load(f)
 
 
 def main() -> None:
-    base_dir = Path(__file__).resolve().parent
-    output_path = base_dir / "merged_data_no_adapt.json"
+    log_path_1 = "scale0.25_TK30_log_Oschersleben_Vinit_6.0_c30.0_l3000.0_p100.0_friction1.2"
+    log_path_2 = "scale0.25_TK30_log_Oschersleben_Vinit_6.0_c30.0_l3000.0_p100.0_friction1.1"
+    log_path_3 = "scale0.25_TK30_log_Oschersleben_Vinit_6.0_c30.0_l3000.0_p100.0_friction1.0"
 
-    merged = {}
-    merged["source_file"] = []
+    log_1 = load_log(log_path_1)
+    log_2 = load_log(log_path_2)
+    log_3 = load_log(log_path_3)
 
-    # Keep only data files in this folder (skip scripts and previous merged output).
-    data_files = sorted(
-        f
-        for f in base_dir.iterdir()
-        if f.is_file()
-        and f.suffix != ".py"
-        and f.name != output_path.name
+    merged_log = {}
+
+    for k in log_1:
+        if k not in log_2 or k not in log_3:
+            raise KeyError(f"Key '{k}' missing in one of the logs")
+
+        a = np.asarray(log_1[k])
+        b = np.asarray(log_2[k])
+        c = np.asarray(log_3[k])
+
+        if a.ndim == 0 or b.ndim == 0 or c.ndim == 0:
+            raise ValueError(f"Key '{k}' contains scalar data and cannot be merged")
+
+        if not (a.shape[1:] == b.shape[1:] == c.shape[1:]):
+            raise ValueError(
+                f"Shape mismatch for key '{k}': "
+                f"{a.shape}, {b.shape}, {c.shape}"
+            )
+
+        merged_log[k] = np.concatenate([a, b, c], axis=0).tolist()
+
+    output_path = Path(log_path_1).with_name(
+        "scale0.25_TK30_log_Oschersleben_merged_friction.json"
     )
 
-    if not data_files:
-        print("No data files found to merge.")
-        return
+    with open(output_path, "w") as f:
+        json.dump(merged_log, f, indent=2)
 
-    for data_file in data_files:
-        with data_file.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        # Use the longest list length in this file to tag rows by source filename.
-        row_count = max((len(v) for v in data.values() if isinstance(v, list)), default=0)
-        merged["source_file"].extend([data_file.name] * row_count)
-
-        for key, value in data.items():
-            if not isinstance(value, list):
-                # Keep scalar metadata once; ignore later conflicting values.
-                merged.setdefault(key, value)
-                continue
-
-            merged.setdefault(key, [])
-            merged[key].extend(value)
-
-    with output_path.open("w", encoding="utf-8") as f:
-        json.dump(merged, f, indent=2)
-
-    print(f"Merged {len(data_files)} files -> {output_path}")
+    print(f"done! merged log saved to {output_path}")
 
 
 if __name__ == "__main__":

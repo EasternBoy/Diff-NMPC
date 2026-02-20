@@ -18,11 +18,11 @@ def main():
     CasadiOuterSensitivityMPCC_high_VY = cos.CasadiOuterSensitivityMPCC_high_VY
     CasadiOuterSensitivityMPCC_low_VY = cos.CasadiOuterSensitivityMPCC_low_VY
     with open(
-        "more_data/scale0.25_TK30_log_Oschersleben_Vinit_6.0_c30.0_l3000.0_p100.0_friction1.2",
+        "more_data/scale0.25_TK30_log_Oschersleben_Vinit_6.0_c30.0_l3000.0_p100.0_friction1.0",
         "r",
     ) as f:
         data = json.load(f)
-    data_name = 'friction1.2'
+    data_name = 'friction1.0'
     cfg = MPCConfigDYN()
     cfg.TK = 20  # Inner MPC horizon
 
@@ -74,7 +74,7 @@ def main():
             dtype=float,
         )
 
-        thresh_hold = jnp.absolute(VY[index]) <  0.1
+        thresh_hold = jnp.absolute(VY[index]) < 0.25
 
         print("thresh_hold:", thresh_hold)
         # gradient_step_q_closed_loop(self, init_state, theta_in, dyn_param, q, outer_steps, lr=1e-3, iters=1)
@@ -96,7 +96,7 @@ def main():
                 dyn_param=dyn_param,
                 q=q0,
                 outer_steps=outer_steps,
-                lr=3.,
+                lr=2.,
                 iters=1,
             )
             q_new = q_new*normal_constant 
