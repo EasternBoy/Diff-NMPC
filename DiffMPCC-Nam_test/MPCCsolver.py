@@ -208,7 +208,7 @@ class MPCConfigDYN:
 
     # https://arxiv.org/pdf/1905.05150.pdf - equation (7)
     CR0: float = 2.3451
-    CR2: float = -0.0095
+    CR2: float = 0.0095
 
 
 class STMPCCPlannerCasadi:

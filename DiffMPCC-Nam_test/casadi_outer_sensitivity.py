@@ -804,12 +804,8 @@ class CasadiOuterSensitivityMPCC_low_VY:
 
         for _ in range(int(iters)):
             loss, grad_q, _ = self.outer_loss_and_grad_q(init_state, dyn_param, q_curr)
-<<<<<<< HEAD
             # q_curr = np.maximum(q_curr - lr * grad_q, 1e-6)
             q_curr -= lr * grad_q
-=======
-            q_curr += - lr * grad_q
->>>>>>> 9b355724cc45d056aa0ea700087f5243dcf630fa
 
         return q_curr, float(loss), grad_q
 
@@ -903,11 +899,6 @@ class CasadiOuterSensitivityMPCC_low_VY:
                 q=q_curr,
                 outer_steps=outer_steps,
             )
-<<<<<<< HEAD
             # q_curr = np.maximum(q_curr - lr * grad_q, 1e-6)
             q_curr -= lr * grad_q
-=======
-            q_curr += lr * grad_q
-
->>>>>>> 9b355724cc45d056aa0ea700087f5243dcf630fa
         return q_curr, float(loss), grad_q
