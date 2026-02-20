@@ -624,7 +624,7 @@ class CasadiOuterSensitivityMPCC_low_VY:
             # Define outer objective to also include control effort, which can influence the optimal trajectory and thus provide a learning signal for q.
             outer_objective +=  (5e-4 *uk[0, t] ** 2 + 0.01*uk[1, t] ** 2) # Change by your design
 
-            outer_objective += -1*vik[t]
+            outer_objective += -8*vik[t]
 
         for t in range(TK - 1):
             du_aug = ca.vertcat(uk[0, t + 1] - uk[0, t], uk[1, t + 1] - uk[1, t], vik[t + 1] - vik[t])
