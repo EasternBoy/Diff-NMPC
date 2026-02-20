@@ -4,7 +4,7 @@ ec = 30.0
 el = 3000.0
 ep = 100.0
 
-filename = f"data/scale0.25_log_Oschersleben_full_Vinit_6.0_c30.0_l3000.0_p100.0_friction1.2_weight1.0_slip_100_150_350_450_800_900"
+filename = f"data/scale0.25_TK30_log_Oschersleben_full_Vinit_6.0_c30.0_l3000.0_p100.0_friction1.2_weight1.0_slip_100_150_350_450_800_900_non"
 
 # 1. Load existing dict
 with open(filename, "r") as f:

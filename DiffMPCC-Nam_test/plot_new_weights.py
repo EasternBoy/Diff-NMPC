@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import PolyCollection
 
 
-LOG_PATH = "main_data_adaptive_n_sample1041_outer_steps30_pg_iters1_lr5"
+LOG_PATH = "merged_data_no_adapt_n8788_outer_steps40_pg_iters1_lr0.1"
 LF = 0.88392
 LR = 1.50876
 
@@ -40,6 +40,6 @@ q_contour = np.asarray(log["q_contour_next"], dtype=float)
 q_lag = np.asarray(log["q_lag_next"], dtype=float)
 q_theta = np.asarray(log["q_theta_next"], dtype=float)
 theta = np.asarray(log["theta"], dtype=float)
-plt.plot(q_contour, label="q_contour")
+plt.plot(q_theta[:2000], label="q_theta")
 plt.legend()
 plt.show()

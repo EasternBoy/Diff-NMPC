@@ -4,7 +4,7 @@ import json
 
 def main() -> None:
     base_dir = Path(__file__).resolve().parent
-    output_path = base_dir / "merged_data.json"
+    output_path = base_dir / "merged_data_no_adapt.json"
 
     merged = {}
     merged["source_file"] = []
