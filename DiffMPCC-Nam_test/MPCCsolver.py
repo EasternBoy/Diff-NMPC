@@ -5,7 +5,7 @@ from scipy.linalg import block_diag
 from scipy.sparse import block_diag, csc_matrix, diags
 from numba import njit
 from scipy.optimize import minimize_scalar
-from scipy.interpolate import CubicSpline 
+from scipy.interpolate import make_interp_spline 
 from argparse import Namespace
 import pandas as pd
 from scipy.spatial import KDTree
@@ -27,8 +27,8 @@ segment_lengths = onp.sqrt(dx**2 + dy**2)
 track_length = float(segment_lengths.sum())  # Actual arc length
 theta = onp.concatenate([onp.array([0.0]), onp.cumsum(segment_lengths)])
 
-spline_x = CubicSpline(theta, x, bc_type="periodic")
-spline_y = CubicSpline(theta, y, bc_type="periodic")
+spline_x = make_interp_spline(theta, x, k=1)
+spline_y = make_interp_spline(theta, y, k=1)
 
 theta_min = float(theta.min())
 theta_max = float(theta.max())
@@ -423,172 +423,6 @@ class STMPCCPlannerCasadi:
 
         return init_sol
     
-    def mpc_prob_init(self):
-        xk      = ca.MX.sym('xk', self.config.NXK, self.config.TK + 1)   # NXK = 7 (no theta)
-        uk      = ca.MX.sym('uk', self.config.NU, self.config.TK)        # NU = 2
-        theta_k = ca.MX.sym('theta_k', self.config.TK + 1)          # Theta as separate variable
-        vik     = ca.MX.sym('vik', self.config.TK)                      # v_theta
-        
-        # Parameters
-        x0k    = ca.MX.sym('x0k', self.config.NXK)
-        theta0 = ca.MX.sym('theta0')  # Initial theta
-        param  = ca.MX.sym('param', self.config.num_param)
-
-        # CasADi interpolants for symbolic evaluation of the reference (periodic extension)
-        theta_grid = jnp.asarray(theta, dtype=float)
-        x_grid = jnp.asarray(x, dtype=float)
-        y_grid = jnp.asarray(y, dtype=float)
-        phi_grid = jnp.unwrap(jnp.asarray([lookup_phi(t) for t in theta_grid]))
-
-        # Sort by theta
-        order = jnp.argsort(theta_grid)
-        theta_grid = theta_grid[order]
-        x_grid = x_grid[order]
-        y_grid = y_grid[order]
-        phi_grid = phi_grid[order]
-
-        # Remove duplicates (strictly increasing required)
-        mask       = jnp.ones_like(theta_grid, dtype=bool)
-        mask       = mask.at[1:].set(theta_grid[1:] > theta_grid[:-1])
-        theta_grid = theta_grid[mask]
-        x_grid     = x_grid[mask]
-        y_grid     = y_grid[mask]
-        phi_grid   = phi_grid[mask]
-
-        L = float(self.track_length)
-
-        # If the grid includes both endpoints of a full loop, drop the last point
-        # to keep strict monotonicity after periodic extension.
-        span = theta_grid[-1] - theta_grid[0]
-        if jnp.isclose(span, L, rtol=0.0, atol=1e-8 * max(1.0, L)):
-            theta_grid = theta_grid[:-1]
-            x_grid = x_grid[:-1]
-            y_grid = y_grid[:-1]
-            phi_grid = phi_grid[:-1]
-
-        # Periodic extension
-        theta_ext = jnp.concatenate([theta_grid - L, theta_grid, theta_grid + L])
-        x_ext     = jnp.concatenate([x_grid, x_grid, x_grid])
-        y_ext     = jnp.concatenate([y_grid, y_grid, y_grid])
-        phi_ext   = jnp.concatenate([phi_grid - 2.0 * jnp.pi, phi_grid, phi_grid + 2.0 * jnp.pi])
-
-        self.ref_x_fun   = ca.interpolant('ref_x_fun', 'bspline', [onp.asarray(theta_ext)], onp.asarray(x_ext))
-        self.ref_y_fun   = ca.interpolant('ref_y_fun', 'bspline', [onp.asarray(theta_ext)], onp.asarray(y_ext))
-        self.ref_phi_fun = ca.interpolant('ref_phi_fun', 'bspline', [onp.asarray(theta_ext)], onp.asarray(phi_ext))
-
-        objective = 0.0
-        constraints = []
-        lbg = []
-        ubg = []
-
-        # Dynamics constraints for vehicle states
-        for t in range(self.config.TK):
-            x_next = self.euler(xk[:, t], uk[:, t], param)
-            
-            constraints.append(xk[:, t + 1] - x_next)
-            lbg.extend([0.0] * self.config.NXK)
-            ubg.extend([0.0] * self.config.NXK)
-        
-  
-        for t in range(self.config.TK):
-            theta_next = theta_k[t] + self.DTK * vik[t]
-            constraints.append(theta_k[t + 1] - theta_next)
-            lbg.append(0.0)
-            ubg.append(0.0)
-
-        # Cost function - contouring and lag errors
-        for t in range(self.config.TK + 1):
-            theta_t = ca.fmod(theta_k[t] - self.theta_min, self.track_length) + self.theta_min
-            x_ref = self.ref_x_fun(theta_t)
-            y_ref = self.ref_y_fun(theta_t)
-            phi_t = self.ref_phi_fun(theta_t)
-            sin_phi_t = ca.sin(phi_t)
-            cos_phi_t = ca.cos(phi_t)
-
-            # Position error relative to reference at theta_k[t]
-            dx = xk[0, t] - x_ref
-            dy = xk[1, t] - y_ref
-
-            dxy = ca.sqrt(dx**2 + dy**2)
-            constraints.append(dxy)
-            lbg.append(0.0)
-            ubg.append(3.5)
-
-            # Contouring error (perpendicular to path)
-            e_c = sin_phi_t * dx - cos_phi_t * dy
-            # Lag error (along path)
-            e_l = -cos_phi_t * dx - sin_phi_t * dy
-            objective += self.q_contour * e_c ** 2
-            objective += self.q_lag * e_l ** 2
-        # Progress reward - maximize theta progression (negative cost)
-        for t in range(self.config.TK):
-            objective += -self.q_theta * vik[t]
-
-        # Input control effort
-        for t in range(self.config.TK):
-            p_u_1 = uk[0, t]
-            p_u_2 = uk[1, t]
-            p_vi = vik[t]
-            p_u = ca.vertcat(p_u_1, p_u_2, p_vi)
-            objective += p_u.T@self.config.Rk_ca@ p_u
-
-        # Input smoothness
-        for t in range(self.config.TK - 1):
-            du_1 = uk[0, t + 1] - uk[0, t]
-            du_2 = uk[1, t + 1] - uk[1, t]
-            dvi = vik[t + 1] - vik[t]
-            du = ca.vertcat(du_1, du_2, dvi)
-            objective += du.T@self.config.Rdk_ca@ du
-
-        # Initial condition constraints
-        constraints.append(xk[:, 0] - x0k)
-        lbg.extend([0.0] * self.config.NXK)
-        ubg.extend([0.0] * self.config.NXK)
-        
-        # Initial theta constraint
-        constraints.append(theta_k[0] - theta0)
-        lbg.append(0.0)
-        ubg.append(0.0)
-
-        # Concatenate constraints
-        g = ca.vertcat(*constraints)
-
-        # Decision variable vector
-        opt_variables = ca.vertcat(
-            ca.reshape(xk, -1, 1),      # States (7 x (TK+1))
-            ca.reshape(uk, -1, 1),      # Controls (2 x TK)
-            theta_k,                     # Theta (TK+1)
-            vik                          # v_theta (TK)
-        )
-
-        # Parameter vector
-        opt_params = ca.vertcat(
-            x0k,
-            theta0,
-            param
-        )
-
-        # Create NLP
-        nlp = {
-            'x': opt_variables,
-            'f': objective,
-            'g': g,
-            'p': opt_params
-        }
-
-        opts = {
-            'ipopt.print_level': 0,
-            'ipopt.max_iter': 5000,  # Reduce iterations
-            'ipopt.tol': 1e-2,  # Relax tolerance
-            'ipopt.warm_start_init_point': 'yes',
-            'ipopt.mu_strategy': 'adaptive',
-            'print_time': 0,
-        }
-
-        self.solver = ca.nlpsol('solver', 'ipopt', nlp, opts)       
-        
-        # Store sizes for unpacking
-        self.n_states   = self.config.NXK * (self.config.TK + 1)
         self.n_controls = self.config.NU * self.config.TK
         self.n_theta    = self.config.TK + 1
         self.n_vi       = self.config.TK
@@ -731,3 +565,169 @@ class STMPCCPlannerCasadi:
             pred_y = states_opt[1, :]
 
         return  ctrl_input, ref_path_x, ref_path_y, pred_x, pred_y
+    def mpc_prob_init(self):
+        xk      = ca.MX.sym('xk', self.config.NXK, self.config.TK + 1)   # NXK = 7 (no theta)
+        uk      = ca.MX.sym('uk', self.config.NU, self.config.TK)        # NU = 2
+        theta_k = ca.MX.sym('theta_k', self.config.TK + 1)          # Theta as separate variable
+        vik     = ca.MX.sym('vik', self.config.TK)                      # v_theta
+        
+        # Parameters
+        x0k    = ca.MX.sym('x0k', self.config.NXK)
+        theta0 = ca.MX.sym('theta0')  # Initial theta
+        param  = ca.MX.sym('param', self.config.num_param)
+
+        # CasADi interpolants for symbolic evaluation of the reference (periodic extension)
+        theta_grid = jnp.asarray(theta, dtype=float)
+        x_grid = jnp.asarray(x, dtype=float)
+        y_grid = jnp.asarray(y, dtype=float)
+        phi_grid = jnp.unwrap(jnp.asarray([lookup_phi(t) for t in theta_grid]))
+
+        # Sort by theta
+        order = jnp.argsort(theta_grid)
+        theta_grid = theta_grid[order]
+        x_grid = x_grid[order]
+        y_grid = y_grid[order]
+        phi_grid = phi_grid[order]
+
+        # Remove duplicates (strictly increasing required)
+        mask       = jnp.ones_like(theta_grid, dtype=bool)
+        mask       = mask.at[1:].set(theta_grid[1:] > theta_grid[:-1])
+        theta_grid = theta_grid[mask]
+        x_grid     = x_grid[mask]
+        y_grid     = y_grid[mask]
+        phi_grid   = phi_grid[mask]
+
+        L = float(self.track_length)
+
+        # If the grid includes both endpoints of a full loop, drop the last point
+        # to keep strict monotonicity after periodic extension.
+        span = theta_grid[-1] - theta_grid[0]
+        if jnp.isclose(span, L, rtol=0.0, atol=1e-8 * max(1.0, L)):
+            theta_grid = theta_grid[:-1]
+            x_grid = x_grid[:-1]
+            y_grid = y_grid[:-1]
+            phi_grid = phi_grid[:-1]
+
+        # Periodic extension
+        theta_ext = jnp.concatenate([theta_grid - L, theta_grid, theta_grid + L])
+        x_ext     = jnp.concatenate([x_grid, x_grid, x_grid])
+        y_ext     = jnp.concatenate([y_grid, y_grid, y_grid])
+        phi_ext   = jnp.concatenate([phi_grid - 2.0 * jnp.pi, phi_grid, phi_grid + 2.0 * jnp.pi])
+
+        self.ref_x_fun   = ca.interpolant('ref_x_fun', 'bspline', [onp.asarray(theta_ext)], onp.asarray(x_ext))
+        self.ref_y_fun   = ca.interpolant('ref_y_fun', 'bspline', [onp.asarray(theta_ext)], onp.asarray(y_ext))
+        self.ref_phi_fun = ca.interpolant('ref_phi_fun', 'bspline', [onp.asarray(theta_ext)], onp.asarray(phi_ext))
+
+        objective = 0.0
+        constraints = []
+        lbg = []
+        ubg = []
+
+        # Dynamics constraints for vehicle states
+        for t in range(self.config.TK):
+            x_next = self.euler(xk[:, t], uk[:, t], param)
+            
+            constraints.append(xk[:, t + 1] - x_next)
+            lbg.extend([0.0] * self.config.NXK)
+            ubg.extend([0.0] * self.config.NXK)
+        
+  
+        for t in range(self.config.TK):
+            theta_next = theta_k[t] + self.DTK * vik[t]
+            constraints.append(theta_k[t + 1] - theta_next)
+            lbg.append(0.0)
+            ubg.append(0.0)
+
+        # Cost function - contouring and lag errors
+        for t in range(self.config.TK + 1):
+            theta_t = ca.fmod(theta_k[t] - self.theta_min, self.track_length) + self.theta_min
+            x_ref = self.ref_x_fun(theta_t)
+            y_ref = self.ref_y_fun(theta_t)
+            phi_t = self.ref_phi_fun(theta_t)
+            sin_phi_t = ca.sin(phi_t)
+            cos_phi_t = ca.cos(phi_t)
+
+            # Position error relative to reference at theta_k[t]
+            dx = xk[0, t] - x_ref
+            dy = xk[1, t] - y_ref
+
+            dxy = ca.sqrt(dx**2 + dy**2)
+            constraints.append(dxy)
+            lbg.append(0.0)
+            ubg.append(3.0)
+
+            # Contouring error (perpendicular to path)
+            e_c = sin_phi_t * dx - cos_phi_t * dy
+            # Lag error (along path)
+            e_l = -cos_phi_t * dx - sin_phi_t * dy
+            objective += self.q_contour * e_c ** 2
+            objective += self.q_lag * e_l ** 2
+        # Progress reward - maximize theta progression (negative cost)
+        for t in range(self.config.TK):
+            objective += -self.q_theta * vik[t]
+
+        # Input control effort
+        for t in range(self.config.TK):
+            p_u_1 = uk[0, t]
+            p_u_2 = uk[1, t]
+            p_vi = vik[t]
+            p_u = ca.vertcat(p_u_1, p_u_2, p_vi)
+            objective += p_u.T@self.config.Rk_ca@ p_u
+
+        # Input smoothness
+        for t in range(self.config.TK - 1):
+            du_1 = uk[0, t + 1] - uk[0, t]
+            du_2 = uk[1, t + 1] - uk[1, t]
+            dvi = vik[t + 1] - vik[t]
+            du = ca.vertcat(du_1, du_2, dvi)
+            objective += du.T@self.config.Rdk_ca@ du
+
+        # Initial condition constraints
+        constraints.append(xk[:, 0] - x0k)
+        lbg.extend([0.0] * self.config.NXK)
+        ubg.extend([0.0] * self.config.NXK)
+        
+        # Initial theta constraint
+        constraints.append(theta_k[0] - theta0)
+        lbg.append(0.0)
+        ubg.append(0.0)
+
+        # Concatenate constraints
+        g = ca.vertcat(*constraints)
+
+        # Decision variable vector
+        opt_variables = ca.vertcat(
+            ca.reshape(xk, -1, 1),      # States (7 x (TK+1))
+            ca.reshape(uk, -1, 1),      # Controls (2 x TK)
+            theta_k,                     # Theta (TK+1)
+            vik                          # v_theta (TK)
+        )
+
+        # Parameter vector
+        opt_params = ca.vertcat(
+            x0k,
+            theta0,
+            param
+        )
+
+        # Create NLP
+        nlp = {
+            'x': opt_variables,
+            'f': objective,
+            'g': g,
+            'p': opt_params
+        }
+
+        opts = {
+            'ipopt.print_level': 0,
+            'ipopt.max_iter': 5000,  # Reduce iterations
+            'ipopt.tol': 1e-2,  # Relax tolerance
+            'ipopt.warm_start_init_point': 'yes',
+            'ipopt.mu_strategy': 'adaptive',
+            'print_time': 0,
+        }
+
+        self.solver = ca.nlpsol('solver', 'ipopt', nlp, opts)       
+        
+        # Store sizes for unpacking
+        self.n_states   = self.config.NXK * (self.config.TK + 1)
