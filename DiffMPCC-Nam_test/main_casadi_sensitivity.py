@@ -22,9 +22,9 @@ def main():
         "r",
     ) as f:
         data = json.load(f)
-    data_name = 'friction1.2'
+    data_name = 'friction1.2-ini'
     cfg = MPCConfigDYN()
-    cfg.TK = 20  # Inner MPC horizon
+    cfg.TK = 30  # Inner MPC horizon
 
     sens_mpcc_h = CasadiOuterSensitivityMPCC_high_VY(cfg)
     sens_mpcc_l = CasadiOuterSensitivityMPCC_low_VY(cfg)
@@ -37,11 +37,11 @@ def main():
     VY = jnp.array(data["vy"])
     STR_angle = jnp.array(data["steer_angle"])
     theta = jnp.array(data["theta"])
-    n_samples   = len(X) # Number of samples to run sensitivity
-    outer_steps = 40   # Outer rollout horizon (can be > cfg.TK)
+    n_samples   = 2 # Number of samples to run sensitivity
+    outer_steps = 500   # Outer rollout horizon (can be > cfg.TK)
     pg_iters    = 1 # Number of projected gradient steps to take on q in each outer iteration
-    lr          = 0.1 # Learning rate for projected gradient step on q
-    index_start = 2
+    lr          = 5.0 # Learning rate for projected gradient step on q
+    index_start = 1
     # time_pl = jnp.array(data["time"])
     # plt.plot(time_pl, VY)
     # plt.show()

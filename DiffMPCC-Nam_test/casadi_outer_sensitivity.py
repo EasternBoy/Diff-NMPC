@@ -125,14 +125,9 @@ class CasadiOuterSensitivityMPCC_high_VY:
             y_grid = y_grid[:-1]
             phi_grid = phi_grid[:-1]
 
-        theta_ext = np.concatenate([theta_grid - L, theta_grid, theta_grid + L])
-        x_ext = np.concatenate([x_grid, x_grid, x_grid])
-        y_ext = np.concatenate([y_grid, y_grid, y_grid])
-        phi_ext = np.concatenate([phi_grid - 2.0 * np.pi, phi_grid, phi_grid + 2.0 * np.pi])
-
-        ref_x_fun = ca.interpolant("ref_x_fun_sens", "bspline", [theta_ext], x_ext)
-        ref_y_fun = ca.interpolant("ref_y_fun_sens", "bspline", [theta_ext], y_ext)
-        ref_phi_fun = ca.interpolant("ref_phi_fun_sens", "bspline", [theta_ext], phi_ext)
+        ref_x_fun = ca.interpolant("ref_x_fun_sens", "linear", [theta_grid], x_grid)
+        ref_y_fun = ca.interpolant("ref_y_fun_sens", "linear", [theta_grid], y_grid)
+        ref_phi_fun = ca.interpolant("ref_phi_fun_sens", "linear", [theta_grid], phi_grid)
 
         constraints = []
         lbg = []
@@ -171,7 +166,7 @@ class CasadiOuterSensitivityMPCC_high_VY:
             inner_objective += q[0] * e_c ** 2 + q[1] * e_l ** 2
             # Fixed outer objective to learn q from trajectory quality.
             # Define outer objective as trajectory tracking error, independent of q directly.
-            outer_objective += 3*e_c ** 2 + 30*e_l ** 2 # Change by your design
+            outer_objective += 0.01*e_c ** 2 + 1*e_l ** 2 # Change by your design
             # 
         for t in range(TK):
             inner_objective += -q[2] * vik[t]
@@ -180,7 +175,7 @@ class CasadiOuterSensitivityMPCC_high_VY:
             # Define outer objective to also include control effort, which can influence the optimal trajectory and thus provide a learning signal for q.
             outer_objective +=  (5e-4 *uk[0, t] ** 2 + 0.01*uk[1, t] ** 2) # Change by your design
 
-            outer_objective += -150*vik[t]
+            outer_objective += -400*vik[t]
 
         for t in range(TK - 1):
             du_aug = ca.vertcat(uk[0, t + 1] - uk[0, t], uk[1, t + 1] - uk[1, t], vik[t + 1] - vik[t])
@@ -393,7 +388,7 @@ class CasadiOuterSensitivityMPCC_high_VY:
         total_loss = 0.0
         total_grad_q = np.zeros(3, dtype=float)
 
-        max_theta_step = float(np.clip(np.abs(state[2]) * self.DTK * 3.0, 1.0, 12.0))
+        # max_theta_step = float(np.clip(np.abs(state[2]) * self.DTK * 3.0, 1.0, 12.0))
         # theta0 = self.look_theta.query(float(state[0]), float(state[1]), k_neighbors=n_neighbors)
         # theta0 = self.look_theta.query_near_prev(
         #             state[0],
@@ -569,14 +564,9 @@ class CasadiOuterSensitivityMPCC_low_VY:
             y_grid = y_grid[:-1]
             phi_grid = phi_grid[:-1]
 
-        theta_ext = np.concatenate([theta_grid - L, theta_grid, theta_grid + L])
-        x_ext = np.concatenate([x_grid, x_grid, x_grid])
-        y_ext = np.concatenate([y_grid, y_grid, y_grid])
-        phi_ext = np.concatenate([phi_grid - 2.0 * np.pi, phi_grid, phi_grid + 2.0 * np.pi])
-
-        ref_x_fun = ca.interpolant("ref_x_fun_sens", "bspline", [theta_ext], x_ext)
-        ref_y_fun = ca.interpolant("ref_y_fun_sens", "bspline", [theta_ext], y_ext)
-        ref_phi_fun = ca.interpolant("ref_phi_fun_sens", "bspline", [theta_ext], phi_ext)
+        ref_x_fun = ca.interpolant("ref_x_fun_sens", "linear", [theta_grid], x_grid)
+        ref_y_fun = ca.interpolant("ref_y_fun_sens", "linear", [theta_grid], y_grid)
+        ref_phi_fun = ca.interpolant("ref_phi_fun_sens", "linear", [theta_grid], phi_grid)
 
         constraints = []
         lbg = []
@@ -607,7 +597,7 @@ class CasadiOuterSensitivityMPCC_low_VY:
             dxy = ca.sqrt(dx**2 + dy**2)
             constraints.append(dxy)
             lbg.append(0.0)
-            ubg.append(3.5)
+            ubg.append(3.0)
 
             e_c = ca.sin(phi_t) * dx - ca.cos(phi_t) * dy
             e_l = -ca.cos(phi_t) * dx - ca.sin(phi_t) * dy
@@ -615,7 +605,7 @@ class CasadiOuterSensitivityMPCC_low_VY:
             inner_objective += q[0] * e_c ** 2 + q[1] * e_l ** 2
             # Fixed outer objective to learn q from trajectory quality.
             # Define outer objective as trajectory tracking error, independent of q directly.
-            outer_objective += 3*e_c ** 2 + 3*e_l ** 2 # Change by your design
+            outer_objective += e_c ** 2 + 3*e_l ** 2 # Change by your design
             # 
         for t in range(TK):
             inner_objective += -q[2] * vik[t]
@@ -624,7 +614,7 @@ class CasadiOuterSensitivityMPCC_low_VY:
             # Define outer objective to also include control effort, which can influence the optimal trajectory and thus provide a learning signal for q.
             outer_objective +=  (5e-4 *uk[0, t] ** 2 + 0.01*uk[1, t] ** 2) # Change by your design
 
-            outer_objective += -1e-2*vik[t]
+            outer_objective += -1e-3*vik[t]
 
         for t in range(TK - 1):
             du_aug = ca.vertcat(uk[0, t + 1] - uk[0, t], uk[1, t + 1] - uk[1, t], vik[t + 1] - vik[t])
@@ -840,7 +830,7 @@ class CasadiOuterSensitivityMPCC_low_VY:
         total_loss = 0.0
         total_grad_q = np.zeros(3, dtype=float)
 
-        max_theta_step = float(np.clip(np.abs(state[2]) * self.DTK * 3.0, 1.0, 12.0))
+        # max_theta_step = float(np.clip(np.abs(state[2]) * self.DTK * 3.0, 1.0, 12.0))
         # theta0 = self.look_theta.query(float(state[0]), float(state[1]), k_neighbors=n_neighbors)
         # theta0 = self.look_theta.query_near_prev(
         #             state[0],

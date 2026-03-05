@@ -18,7 +18,7 @@ def main():
     CasadiOuterSensitivityMPCC_high_VY = cos.CasadiOuterSensitivityMPCC_high_VY
     CasadiOuterSensitivityMPCC_low_VY = cos.CasadiOuterSensitivityMPCC_low_VY
     with open(
-        "more_data/scale0.25_TK30_log_Oschersleben_Vinit_6.0_c30.0_l3000.0_p50.0_friction0.5",
+        "more_data/scale0.25_TK20_log_Oschersleben_full_Vinit_8.0friction0.5",
         "r",
     ) as f:
         data = json.load(f)
@@ -39,14 +39,14 @@ def main():
     theta = jnp.array(data["theta"])
     n_samples   = len(X) # Number of samples to run sensitivity
     outer_steps = 40   # Outer rollout horizon (can be > cfg.TK)
-    pg_iters    = 1 # Number of projected gradient steps to take on q in each outer iteration
-    lr          = 0.1 # Learning rate for projected gradient step on q
-    index_start = 2
+    pg_iters    = 10 # Number of projected gradient steps to take on q in each outer iteration
+    lr          = 0.2 # Learning rate for projected gradient step on q
+    index_start = 5
     # time_pl = jnp.array(data["time"])
     # plt.plot(time_pl, VY)
     # plt.show()
     # return 0
-    normal_constant = 30
+    normal_constant = 1
     print("n_sample:", n_samples)
     for index in range(n_samples-1):
         index += index_start
@@ -74,7 +74,7 @@ def main():
             dtype=float,
         )
 
-        thresh_hold = jnp.absolute(VY[index]) < 0.25
+        thresh_hold = jnp.absolute(VY[index]) < 1.5
 
         print("thresh_hold:", thresh_hold)
         # gradient_step_q_closed_loop(self, init_state, theta_in, dyn_param, q, outer_steps, lr=1e-3, iters=1)
@@ -140,7 +140,7 @@ def main():
         log['q_lag_next'].append(float(q_new[1]))
         log['q_theta_next'].append(float(q_new[2]))
    
-        with open(f'{data_name}_n{n_samples}_outer_steps{outer_steps}_pg_iters{pg_iters}_lr{lr}', 'w') as f:
+        with open(f'{data_name}_outer_steps{outer_steps}_pg_iters{pg_iters}_lr{lr}', 'w') as f:
             json.dump(log, f)
 
 if __name__ == "__main__":

@@ -18,11 +18,11 @@ def main():
     CasadiOuterSensitivityMPCC_high_VY = cos.CasadiOuterSensitivityMPCC_high_VY
     CasadiOuterSensitivityMPCC_low_VY = cos.CasadiOuterSensitivityMPCC_low_VY
     with open(
-        "more_data/scale0.25_TK20_log_Oschersleben_full_Vinit_8.0friction1.1",
+        "more_data/scale0.25_TK20_log_Oschersleben_full_Vinit_8.0friction1.2",
         "r",
     ) as f:
         data = json.load(f)
-    data_name = 'friction1.1'
+    data_name = 'friction1.2'
     cfg = MPCConfigDYN()
     cfg.TK = 20  # Inner MPC horizon
 
