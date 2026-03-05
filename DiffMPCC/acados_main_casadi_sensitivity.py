@@ -1,0 +1,120 @@
+import json
+import importlib
+import numpy as np
+import jax.numpy as jnp
+
+
+from MPCCsolver import MPCConfigDYN
+import casadi_outer_sensitivity as cos
+import time
+
+def main():
+    # In notebook sessions, force reload so newly added class methods are visible.
+    log = {'time': [], 'x': [], 'y': [], 'vx': [], 'yaw': [], 'vy': [], 'yaw_rate': [], 'steer_angle': [],
+           'acce': [], 'steering_rate':[], 'theta': [],
+            'BR': [], 'CR': [], 'DR': [], 'BF': [], 'CF': [], 'DF': [], 'CM': [], 'mu_x': [], 'mu_y': [],
+            'q_contour_cur': [], 'q_lag_cur': [], 'q_theta_cur': [], 'q_contour_next': [], 'q_lag_next': [], 'q_theta_next': []}
+    importlib.reload(cos)
+    CasadiOuterSensitivityMPCC = cos.CasadiOuterSensitivityMPCC
+
+    with open(
+        "data/log_full_Vinit_8.0_c30.0_l2000.0_p50.0_weightslip1.2_thetaslip_100_150_290_320_non",
+        "r",
+    ) as f:
+        data = json.load(f)
+
+    cfg = MPCConfigDYN()
+    cfg.TK = 30  # Inner MPC horizon
+
+    sens_mpcc = CasadiOuterSensitivityMPCC(cfg)
+
+    X = jnp.array(data["x"])
+    Y = jnp.array(data["y"])
+    Yaw = jnp.array(data["yaw"])
+    Yaw_rate = jnp.array(data["yaw_rate"])
+    VX = jnp.array(data["vx"])
+    VY = jnp.array(data["vy"])
+    STR_angle = jnp.array(data["steer_angle"])
+    n_samples   = 1  # Number of samples to run sensitivity
+    outer_steps = 100   # Outer rollout horizon (can be > cfg.TK)
+    pg_iters    = 5 # Number of projected gradient steps to take on q in each outer iteration
+    lr          = 2e-1 # Learning rate for projected gradient step on q
+    index_start = 0
+    for index in range(n_samples):
+        index += index_start
+        start = time.time()
+        state = np.array(
+            [X[index], Y[index], VX[index], Yaw[index], VY[index], Yaw_rate[index], STR_angle[index]],
+            dtype=float,
+        )
+
+        dyn_param = np.array(
+            [
+                data["BR"][index],
+                data["CR"][index],
+                data["DR"][index] * (9.81 * cfg.MASS) / 2.0,
+                data["BF"][index],
+                data["CF"][index],
+                data["DF"][index] * (9.81 * cfg.MASS) / 2.0,
+                data["CM"][index],
+            ],
+            dtype=float,
+        )
+
+        q0 = np.array(
+            [data["q_contour"][index], data["q_lag"][index], data["q_theta"][index]],
+            dtype=float,
+        )
+
+        q_new, loss, grad_q = sens_mpcc.gradient_step_q_closed_loop(
+            init_state=state,
+            dyn_param=dyn_param,
+            q=q0,
+            outer_steps=outer_steps,
+            lr=lr,
+            iters=pg_iters,
+        )
+
+        print(f"index={index}")
+        print(f"Parameters: BR {data['BR'][index]}, DR {data['DR'][index]}")
+        print(f"positions X: {X[index]}; Y: {Y[index]}")
+        print(f"  q init: {q0}")
+        print(f"  outer loss: {loss:.6f}")
+        print(f"  grad q: {grad_q}")
+        print(f"  outer_steps: {outer_steps}, inner_TK: {cfg.TK}")
+        print(f"  q updated ({pg_iters} iters): {q_new}\n")
+        print(f" solving time: {time.time() - start}")
+
+        log['time'].append(float(data["time"][index]))
+        log['x'].append(float(X[index]))
+        log['y'].append(float(Y[index]))
+        log['vx'].append(float(VX[index]))
+        log['vy'].append(float(VY[index]))
+        log['yaw'].append(float(Yaw[index]))
+        log['yaw_rate'].append(float(Yaw_rate[index]))
+        log['steer_angle'].append(float(STR_angle[index]))
+        log['theta'].append(float(data["theta"][index]))
+
+        log['BR'].append(float(data["BR"][index]))
+        log['CR'].append(float(data["CR"][index]))
+        log['DR'].append(float(data["DR"][index]))
+        log['BF'].append(float(data["BF"][index]))
+        log['CF'].append(float(data["CF"][index]))
+        log['DF'].append(float(data["DF"][index]))
+        log['CM'].append(float(data["CM"][index]))
+
+        # 'q_contour_cur': [], 'q_lag_cur': [], 'q_theta_cur': [], 'q_contour_next': [], 'q_lag_next': [], 'q_theta_next': []
+
+        log['q_contour_cur'].append(float(data["q_contour"][index]))
+        log['q_lag_cur'].append(float(data["q_lag"][index]))
+        log['q_theta_cur'].append(float(data["q_theta"][index]))
+
+        log['q_contour_next'].append(float(q_new[0]))
+        log['q_lag_next'].append(float(q_new[1]))
+        log['q_theta_next'].append(float(q_new[2]))
+   
+        with open(f'main_data_adaptive_n_sample{n_samples}_outer_steps{outer_steps}_pg_iters{pg_iters}_lr{lr}', 'w') as f:
+            json.dump(log, f)
+
+if __name__ == "__main__":
+    main()
