@@ -109,7 +109,7 @@ class CasadiOuterSensitivityMPCC:
         dvy       = (Fry + Ffy * ca.cos(steering) + Ffx * ca.sin(steering) - vx * yaw_rate * self.config.MASS)/self.config.MASS
         dyaw_rate = (Ffy * self.config.LF * ca.cos(steering) - Fry * self.config.LR)/self.config.I_Z
         dsteering = delta_v
-
+    
         return ca.vertcat(dx, dy, dvx, dyaw, dvy, dyaw_rate, dsteering)
 
     def _build_nlp_and_sensitivity(self):
@@ -149,7 +149,8 @@ class CasadiOuterSensitivityMPCC:
             y_ref   = self.ref_y_fun(theta_t)
             phi_t   = self.ref_phi_fun(theta_t)
 
-            dx, dy = xk[0, t] - x_ref, xk[1, t] - y_ref
+            dx = xk[0, t] - x_ref
+            dy = xk[1, t] - y_ref
 
             dxy = dx**2 + dy**2
             constraints.append(dxy)
@@ -189,9 +190,10 @@ class CasadiOuterSensitivityMPCC:
         nlp = {"x": z, "f": inner_objective, "g": g, "p": p}
         opts = {
             "ipopt.print_level": 0,
-            "ipopt.max_iter": 200,
+            "ipopt.max_iter": 5000,
             "ipopt.tol": 1e-2,
             "ipopt.warm_start_init_point": "yes",
+            "ipopt.mu_strategy": "adaptive",
             "print_time": 0,
         }
 
@@ -371,7 +373,7 @@ class CasadiOuterSensitivityMPCC:
         vi_seq = np.asarray(z[idx : idx + TK], dtype=float)
         return states, controls, theta_seq, vi_seq
 
-    def outer_loss_and_grad_q_closed_loop(self, init_state, dyn_param, q, outer_steps):
+    def outer_loss_and_grad_q_closed_loop(self, init_state, init_theta, dyn_param, q, outer_steps):
         """
         Closed-loop outer objective with horizon `outer_steps`.
 
@@ -383,8 +385,7 @@ class CasadiOuterSensitivityMPCC:
         total_loss = 0.0
         total_grad_q = np.zeros(3, dtype=float)
 
-        theta0 = self.look_theta.query(float(state[0]), float(state[1]), k_neighbors=n_neighbors)
-
+        theta0 = init_theta
         for _ in range(int(outer_steps)): # Loop over outer steps
             out = self.solve(state, dyn_param, q_np, theta0=theta0)
             if not out["success"]:
@@ -420,7 +421,7 @@ class CasadiOuterSensitivityMPCC:
 
         return float(total_loss), total_grad_q
 
-    def gradient_step_q_closed_loop(self, init_state, dyn_param, q, outer_steps, lr=1e-3, iters=1):
+    def gradient_step_q_closed_loop(self, init_state, theta_in, dyn_param, q, outer_steps, lr=1e-3, iters=1):
         q_curr = np.asarray(q, dtype=float).reshape(-1)
         loss = 0.0
         grad_q = np.zeros_like(q_curr)
@@ -428,6 +429,7 @@ class CasadiOuterSensitivityMPCC:
         for _ in range(int(iters)):
             loss, grad_q = self.outer_loss_and_grad_q_closed_loop(
                 init_state=init_state,
+                init_theta=theta_in,
                 dyn_param=dyn_param,
                 q=q_curr,
                 outer_steps=outer_steps,
