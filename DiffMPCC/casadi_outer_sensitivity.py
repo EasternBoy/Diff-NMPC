@@ -29,57 +29,85 @@ class CasadiOuterSensitivityMPCC:
     """
 
     def __init__(self, config: MPCConfigDYN):
-        self.config = config
-        self.DTK = float(config.DTK)
-        self.look_theta = ThetaLookupTable(spline_x, spline_y, theta_min, theta_max, n_samples=200000)
-        self.theta_min = float(theta_min)
+        self.config       = config
+        self.DTK          = float(config.DTK)
+        self.look_theta   = ThetaLookupTable(spline_x, spline_y, theta_min, theta_max, n_samples=200000)
+        self.theta_min    = float(theta_min)
         self.track_length = float(theta_max - theta_min)
 
+        self._build_reference_interpolants()
         self._build_nlp_and_sensitivity()
         self.init_sol = np.zeros(self.nz, dtype=float)
 
-    def _predictive_model_sym(self, state, control_input, dyn):
-        # state = [x, y, vx, yaw, vy, yaw_rate, steering_angle]
+    def _build_reference_interpolants(self):
+        theta_grid = np.asarray(theta, dtype=float)
+        x_grid     = np.asarray(x, dtype=float)
+        y_grid     = np.asarray(y, dtype=float)
+        phi_grid   = np.unwrap(np.asarray([lookup_phi(ti) for ti in theta_grid], dtype=float))
+
+        order      = np.argsort(theta_grid)
+        theta_grid = theta_grid[order]
+        x_grid     = x_grid[order]
+        y_grid     = y_grid[order]
+        phi_grid   = phi_grid[order]
+
+        dedup_mask     = np.ones_like(theta_grid, dtype=bool)
+        dedup_mask[1:] = theta_grid[1:] > theta_grid[:-1]
+        theta_grid     = theta_grid[dedup_mask]
+        x_grid         = x_grid[dedup_mask]
+        y_grid         = y_grid[dedup_mask]
+        phi_grid       = phi_grid[dedup_mask]
+
+        L = self.track_length
+        if np.isclose(theta_grid[-1] - theta_grid[0], L):
+            theta_grid = theta_grid[:-1]
+            x_grid = x_grid[:-1]
+            y_grid = y_grid[:-1]
+            phi_grid = phi_grid[:-1]
+
+        theta_ext = np.concatenate([theta_grid - L, theta_grid, theta_grid + L])
+        x_ext     = np.concatenate([x_grid, x_grid, x_grid])
+        y_ext     = np.concatenate([y_grid, y_grid, y_grid])
+        phi_ext   = np.concatenate([phi_grid - 2.0 * np.pi, phi_grid, phi_grid + 2.0 * np.pi])
+
+        self.ref_x_fun   = ca.interpolant("ref_x_fun_sens",   "bspline", [theta_ext], x_ext)
+        self.ref_y_fun   = ca.interpolant("ref_y_fun_sens",   "bspline", [theta_ext], y_ext)
+        self.ref_phi_fun = ca.interpolant("ref_phi_fun_sens", "bspline", [theta_ext], phi_ext)
+
+    def dynamic_model(self, state, control_input, dyn):
+        # state = [X, Y, vx, yaw, vy, yaw_rate, steering_angle]
         # control_input = [Fxr, delta_v]
         BR, CR, DR, BF, CF, DF, CM = dyn[0], dyn[1], dyn[2], dyn[3], dyn[4], dyn[5], dyn[6]
 
-        vx = ca.fmin(ca.fmax(state[2], self.config.MIN_SPEED), self.config.MAX_SPEED)
-        steering = ca.fmin(ca.fmax(state[6], self.config.MIN_STEER), self.config.MAX_STEER)
-
-        X = state[0]
-        Y = state[1]
-        yaw = state[3]
-        vy = state[4]
+        X        = state[0]
+        Y        = state[1]
+        vx       = state[2]
+        yaw      = state[3]
+        vy       = state[4]
         yaw_rate = state[5]
+        steering = state[6]
 
-        Fxr = ca.fmin(
-            ca.fmax(control_input[0], self.config.MAX_DECEL * self.config.MASS),
-            self.config.MAX_ACCEL * self.config.MASS,
-        )
-        delta_v = ca.fmin(ca.fmax(control_input[1], -self.config.MAX_STEER_V), self.config.MAX_STEER_V)
 
-        vx_safe = ca.sign(vx) * ca.fmax(ca.fabs(vx), 0.05)
+        Fxr     = control_input[0]
+        delta_v = control_input[1]
 
-        alfa_f = steering - ca.atan2(yaw_rate * self.config.LF + vy, vx_safe)
-        alfa_r = ca.atan2(yaw_rate * self.config.LR - vy, vx_safe)
+
+        alfa_f  = steering - ca.atan2(yaw_rate * self.config.LF + vy, vx)
+        alfa_r  = ca.atan2(yaw_rate * self.config.LR - vy, vx)
 
         Ffy = DF * ca.sin(CF * ca.atan(BF * alfa_f))
         Fry = DR * ca.sin(CR * ca.atan(BR * alfa_r))
 
-        Fx = CM * Fxr - self.config.CR0 - self.config.CR2 * vx_safe ** 2.0
-        Frx = Fx * (1.0 - self.config.TORQUE_SPLIT)
+        Fx  = CM * Fxr - self.config.CR0 - self.config.CR2 * vx ** 2
+        Frx = Fx * (1. - self.config.TORQUE_SPLIT)
         Ffx = Fx * self.config.TORQUE_SPLIT
 
-        dx = vx_safe * ca.cos(yaw) - vy * ca.sin(yaw)
-        dy = vx_safe * ca.sin(yaw) + vy * ca.cos(yaw)
-        dvx = (1.0 / self.config.MASS) * (
-            Frx - Ffy * ca.sin(steering) + Ffx * ca.cos(steering) + vy * yaw_rate * self.config.MASS
-        )
-        dyaw = yaw_rate
-        dvy = (1.0 / self.config.MASS) * (
-            Fry + Ffy * ca.cos(steering) + Ffx * ca.sin(steering) - vx_safe * yaw_rate * self.config.MASS
-        )
-        dyaw_rate = (1.0 / self.config.I_Z) * (Ffy * self.config.LF * ca.cos(steering) - Fry * self.config.LR)
+        dx        = vx * ca.cos(yaw) - vy * ca.sin(yaw)
+        dy        = vx * ca.sin(yaw) + vy * ca.cos(yaw)
+        dvx       = (Frx - Ffy * ca.sin(steering) + Ffx * ca.cos(steering) + vy * yaw_rate * self.config.MASS)/self.config.MASS
+        dyaw      = yaw_rate
+        dvy       = (Fry + Ffy * ca.cos(steering) + Ffx * ca.sin(steering) - vx * yaw_rate * self.config.MASS)/self.config.MASS
+        dyaw_rate = (Ffy * self.config.LF * ca.cos(steering) - Fry * self.config.LR)/self.config.I_Z
         dsteering = delta_v
 
         return ca.vertcat(dx, dy, dvx, dyaw, dvy, dyaw_rate, dsteering)
@@ -99,48 +127,13 @@ class CasadiOuterSensitivityMPCC:
         dyn    = ca.MX.sym("dyn", self.config.num_param)
         q      = ca.MX.sym("q", 3)
 
-        theta_grid = np.asarray(theta, dtype=float)
-        x_grid = np.asarray(x, dtype=float)
-        y_grid = np.asarray(y, dtype=float)
-        phi_grid = np.unwrap(np.asarray([lookup_phi(ti) for ti in theta_grid], dtype=float))
-
-        order = np.argsort(theta_grid)
-        theta_grid = theta_grid[order]
-        x_grid = x_grid[order]
-        y_grid = y_grid[order]
-        phi_grid = phi_grid[order]
-
-        dedup_mask = np.ones_like(theta_grid, dtype=bool)
-        dedup_mask[1:] = theta_grid[1:] > theta_grid[:-1]
-        theta_grid = theta_grid[dedup_mask]
-        x_grid = x_grid[dedup_mask]
-        y_grid = y_grid[dedup_mask]
-        phi_grid = phi_grid[dedup_mask]
-
-        L = self.track_length
-        if np.isclose(theta_grid[-1] - theta_grid[0], L):
-            theta_grid = theta_grid[:-1]
-            x_grid = x_grid[:-1]
-            y_grid = y_grid[:-1]
-            phi_grid = phi_grid[:-1]
-
-        theta_ext = np.concatenate([theta_grid - L, theta_grid, theta_grid + L])
-        x_ext = np.concatenate([x_grid, x_grid, x_grid])
-        y_ext = np.concatenate([y_grid, y_grid, y_grid])
-        phi_ext = np.concatenate([phi_grid - 2.0 * np.pi, phi_grid, phi_grid + 2.0 * np.pi])
-
-        ref_x_fun = ca.interpolant("ref_x_fun_sens", "bspline", [theta_ext], x_ext)
-        ref_y_fun = ca.interpolant("ref_y_fun_sens", "bspline", [theta_ext], y_ext)
-        ref_phi_fun = ca.interpolant("ref_phi_fun_sens", "bspline", [theta_ext], phi_ext)
-
         constraints = []
         lbg = []
         ubg = []
         inner_objective = 0.0
-        outer_objective = 0.0
 
         for t in range(TK):
-            x_next = xk[:, t] + self.DTK * self._predictive_model_sym(xk[:, t], uk[:, t], dyn)
+            x_next = xk[:, t] + self.DTK * self.dynamic_model(xk[:, t], uk[:, t], dyn)
             constraints.append(xk[:, t + 1] - x_next)
             lbg.extend([0.0] * NXK)
             ubg.extend([0.0] * NXK)
@@ -152,34 +145,31 @@ class CasadiOuterSensitivityMPCC:
 
         for t in range(TK + 1):
             theta_t = ca.fmod(theta_k[t] - self.theta_min, self.track_length) + self.theta_min
-            x_ref = ref_x_fun(theta_t)
-            y_ref = ref_y_fun(theta_t)
-            phi_t = ref_phi_fun(theta_t)
+            x_ref   = self.ref_x_fun(theta_t)
+            y_ref   = self.ref_y_fun(theta_t)
+            phi_t   = self.ref_phi_fun(theta_t)
 
-            dx = xk[0, t] - x_ref
-            dy = xk[1, t] - y_ref
+            dx, dy = xk[0, t] - x_ref, xk[1, t] - y_ref
 
-            dxy = ca.sqrt(dx**2 + dy**2)
+            dxy = dx**2 + dy**2
             constraints.append(dxy)
-            lbg.append(0.0)
-            ubg.append(2.5)
+            lbg.append(-np.inf)
+            ubg.append(3.5 ** 2)
 
             e_c = ca.sin(phi_t) * dx - ca.cos(phi_t) * dy
             e_l = -ca.cos(phi_t) * dx - ca.sin(phi_t) * dy
-
             inner_objective += q[0] * e_c ** 2 + q[1] * e_l ** 2
-            # Fixed outer objective to learn q from trajectory quality.
-            # Define outer objective as trajectory tracking error, independent of q directly.
-            outer_objective += 20*e_c ** 2 + 2000*e_l ** 2 # Change by your design
-            # 
+
         for t in range(TK):
             inner_objective += -q[2] * vik[t]
             u_aug            = ca.vertcat(uk[0, t], uk[1, t], vik[t])
             inner_objective += ca.mtimes([u_aug.T, self.config.Rk_ca, u_aug])
-            # Define outer objective to also include control effort, which can influence the optimal trajectory and thus provide a learning signal for q.
-            # outer_objective +=  (5e-4 *uk[0, t] ** 2 + 0.01*uk[1, t] ** 2) # Change by your design
-
-            outer_objective += -100*vik[t]
+        
+        # Define outer objective to also include control effort, 
+        # Outer objective can influence the optimal trajectory and thus provide a learning signal for q.
+        # Fixed outer objective to learn q from trajectory quality.
+        outer_objective  = 0.
+        outer_objective += -100*(vik[0] + vik[1])
 
         for t in range(TK - 1):
             du_aug = ca.vertcat(uk[0, t + 1] - uk[0, t], uk[1, t + 1] - uk[1, t], vik[t + 1] - vik[t])
@@ -202,7 +192,6 @@ class CasadiOuterSensitivityMPCC:
             "ipopt.max_iter": 200,
             "ipopt.tol": 1e-2,
             "ipopt.warm_start_init_point": "yes",
-            "ipopt.mu_strategy": "adaptive",
             "print_time": 0,
         }
 
@@ -274,6 +263,9 @@ class CasadiOuterSensitivityMPCC:
         return np.asarray(lbx, dtype=float), np.asarray(ubx, dtype=float)
 
     def solve(self, init_state, dyn_param, q, theta0=None):
+        TK = self.config.TK
+        nx = self.config.NXK
+
         x0   = np.asarray(init_state, dtype=float).reshape(-1)
         dyn  = np.asarray(dyn_param, dtype=float).reshape(-1)
         q_np = np.asarray(q, dtype=float).reshape(-1)
@@ -283,6 +275,15 @@ class CasadiOuterSensitivityMPCC:
 
         p_vec = np.concatenate([x0, [float(theta0)], dyn, q_np])
 
+
+        if np.linalg.norm(self.init_sol) == 0:
+            self.init_sol = np.concatenate([init_state] * (TK+1))
+            self.init_sol = np.concatenate((self.init_sol, [0, 0] * TK))
+            self.init_sol = np.concatenate((self.init_sol, [0.] * (TK+1)))
+            self.init_sol = np.concatenate((self.init_sol, [0.] * TK))
+
+
+
         sol = self.solver(
             x0 =self.init_sol,
             lbx=self.lbx,
@@ -291,10 +292,9 @@ class CasadiOuterSensitivityMPCC:
             ubg=self.ubg,
             p  =p_vec,
         )
-
          
-        solver_stats = self.solver.stats()
-        is_successful = solver_stats['success']
+        solver_stats   = self.solver.stats()
+        is_successful  = solver_stats['success']
         status_message = solver_stats['return_status']
 
         # if is_successful:
