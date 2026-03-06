@@ -8,38 +8,43 @@ from MPCCsolver import MPCConfigDYN
 import casadi_outer_sensitivity as cos
 import time
 
+
+collection  = False
+outer_steps = 100   # Outer rollout horizon (can be > cfg.TK)
+pg_iters    = 10   # Number of projected gradient steps to take on q in each outer iteration
+lr          = 0.2  # Learning rate for projected gradient step on q
+index_start = 5
+
+
 def main():
     # In notebook sessions, force reload so newly added class methods are visible.
     log = {'time': [], 'x': [], 'y': [], 'vx': [], 'yaw': [], 'vy': [], 'yaw_rate': [], 'steer_angle': [],
-           'acce': [], 'steering_rate':[], 'theta': [], 'thresh':[],
+           'acce': [], 'steering_rate':[], 'theta': [],
             'BR': [], 'CR': [], 'DR': [], 'BF': [], 'CF': [], 'DF': [], 'CM': [], 'mu_x': [], 'mu_y': [],
             'q_contour_cur': [], 'q_lag_cur': [], 'q_theta_cur': [], 'q_contour_next': [], 'q_lag_next': [], 'q_theta_next': []}
-    importlib.reload(cos)
-    CasadiOuterSensitivityMPCC = cos.CasadiOuterSensitivityMPCC
+    
     with open(
         "data/scale0.25_TK20_log_Oschersleben_full_Vinit_8.0friction0.7",
         "r",
     ) as f:
         data = json.load(f)
-    data_name = 'friction0.5'
+    data_name = 'Vinit=8.0-friction=0.7'
+
     cfg = MPCConfigDYN()
     cfg.TK = 20  # Inner MPC horizon
 
-    sens_mpcc = CasadiOuterSensitivityMPCC(cfg)
+    sens_mpcc = cos.CasadiOuterSensitivityMPCC(cfg)
 
-    X        = jnp.array(data["x"])
-    Y        = jnp.array(data["y"])
-    Yaw      = jnp.array(data["yaw"])
-    Yaw_rate = jnp.array(data["yaw_rate"])
+    X           = jnp.array(data["x"])
+    Y           = jnp.array(data["y"])
+    Yaw         = jnp.array(data["yaw"])
+    Yaw_rate    = jnp.array(data["yaw_rate"])
     VX          = jnp.array(data["vx"])
     VY          = jnp.array(data["vy"])
     STR_angle   = jnp.array(data["steer_angle"])
     theta       = jnp.array(data["theta"])
     n_samples   = len(X) # Number of samples to run sensitivity
-    outer_steps = 60   # Outer rollout horizon (can be > cfg.TK)
-    pg_iters    = 20   # Number of projected gradient steps to take on q in each outer iteration
-    lr          = 0.2  # Learning rate for projected gradient step on q
-    index_start = 5
+
 
     normal_constant = 1
     print("n_sample:", n_samples)
@@ -68,10 +73,6 @@ def main():
             dtype=float,
         )
 
-        thresh_hold = jnp.absolute(VY[index]) < 1.5
-
-        print("thresh_hold:", thresh_hold)
-        # gradient_step_q_closed_loop(self, init_state, theta_in, dyn_param, q, outer_steps, lr=1e-3, iters=1)
         q_new, loss, grad_q = sens_mpcc.gradient_step_q_closed_loop(
             init_state=state,
             theta_in=theta_in,
@@ -94,34 +95,35 @@ def main():
         print(f"solving time: {time.time() - start}")
         print("")
 
-        log['thresh'].append(str(thresh_hold))
-        log['time'].append(float(data["time"][index]))
-        log['x'].append(float(X[index]))
-        log['y'].append(float(Y[index]))
-        log['vx'].append(float(VX[index]))
-        log['vy'].append(float(VY[index]))
-        log['yaw'].append(float(Yaw[index]))
-        log['yaw_rate'].append(float(Yaw_rate[index]))
-        log['steer_angle'].append(float(STR_angle[index]))
-        log['theta'].append(float(data["theta"][index]))
+        if collection == True:
 
-        log['BR'].append(float(data["BR"][index]))
-        log['CR'].append(float(data["CR"][index]))
-        log['DR'].append(float(data["DR"][index]))
-        log['BF'].append(float(data["BF"][index]))
-        log['CF'].append(float(data["CF"][index]))
-        log['DF'].append(float(data["DF"][index]))
-        log['CM'].append(float(data["CM"][index]))
+            log['time'].append(float(data["time"][index]))
+            log['x'].append(float(X[index]))
+            log['y'].append(float(Y[index]))
+            log['vx'].append(float(VX[index]))
+            log['vy'].append(float(VY[index]))
+            log['yaw'].append(float(Yaw[index]))
+            log['yaw_rate'].append(float(Yaw_rate[index]))
+            log['steer_angle'].append(float(STR_angle[index]))
+            log['theta'].append(float(data["theta"][index]))
 
-        # 'q_contour_cur': [], 'q_lag_cur': [], 'q_theta_cur': [], 'q_contour_next': [], 'q_lag_next': [], 'q_theta_next': []
+            log['BR'].append(float(data["BR"][index]))
+            log['CR'].append(float(data["CR"][index]))
+            log['DR'].append(float(data["DR"][index]))
+            log['BF'].append(float(data["BF"][index]))
+            log['CF'].append(float(data["CF"][index]))
+            log['DF'].append(float(data["DF"][index]))
+            log['CM'].append(float(data["CM"][index]))
 
-        log['q_contour_cur'].append(float(data["q_contour"][index]))
-        log['q_lag_cur'].append(float(data["q_lag"][index]))
-        log['q_theta_cur'].append(float(data["q_theta"][index]))
+            # 'q_contour_cur': [], 'q_lag_cur': [], 'q_theta_cur': [], 'q_contour_next': [], 'q_lag_next': [], 'q_theta_next': []
 
-        log['q_contour_next'].append(float(q_new[0]))
-        log['q_lag_next'].append(float(q_new[1]))
-        log['q_theta_next'].append(float(q_new[2]))
+            log['q_contour_cur'].append(float(data["q_contour"][index]))
+            log['q_lag_cur'].append(float(data["q_lag"][index]))
+            log['q_theta_cur'].append(float(data["q_theta"][index]))
+
+            log['q_contour_next'].append(float(q_new[0]))
+            log['q_lag_next'].append(float(q_new[1]))
+            log['q_theta_next'].append(float(q_new[2]))
    
         with open(f'{data_name}_outer_steps{outer_steps}_pg_iters{pg_iters}_lr{lr}', 'w') as f:
             json.dump(log, f)
