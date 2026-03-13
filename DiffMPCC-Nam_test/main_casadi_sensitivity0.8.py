@@ -22,7 +22,7 @@ def main():
         "r",
     ) as f:
         data = json.load(f)
-    data_name = 'friction0.8'
+    data_name = 'qt_800_friction0.8'
     cfg = MPCConfigDYN()
     cfg.TK = 20  # Inner MPC horizon
 
@@ -38,9 +38,9 @@ def main():
     STR_angle = jnp.array(data["steer_angle"])
     theta = jnp.array(data["theta"])
     n_samples   = len(X) # Number of samples to run sensitivity
-    outer_steps = 40   # Outer rollout horizon (can be > cfg.TK)
+    outer_steps = 100   # Outer rollout horizon (can be > cfg.TK)
     pg_iters    = 10 # Number of projected gradient steps to take on q in each outer iteration
-    lr          = 0.2 # Learning rate for projected gradient step on q
+    lr          = 0.1 # Learning rate for projected gradient step on q
     index_start = 5
     # time_pl = jnp.array(data["time"])
     # plt.plot(time_pl, VY)

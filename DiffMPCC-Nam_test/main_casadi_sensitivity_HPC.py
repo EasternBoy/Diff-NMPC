@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 from MPCCsolver import MPCConfigDYN
-import casadi_outer_sensitivity as cos
+import casadi_outer_sensitivity_copy as cos
 import time
 
 def main():
@@ -18,11 +18,11 @@ def main():
     CasadiOuterSensitivityMPCC_high_VY = cos.CasadiOuterSensitivityMPCC_high_VY
     CasadiOuterSensitivityMPCC_low_VY = cos.CasadiOuterSensitivityMPCC_low_VY
     with open(
-        "more_data/scale0.25_TK20_log_Oschersleben_full_Vinit_8.0friction0.5",
+        "more_data/scale0.25_TK20_log_Oschersleben_full_Vinit_8.0friction0.9",
         "r",
     ) as f:
         data = json.load(f)
-    data_name = 'friction0.5'
+    data_name = 'Test_0_friction0.9'
     cfg = MPCConfigDYN()
     cfg.TK = 20  # Inner MPC horizon
 
@@ -38,10 +38,10 @@ def main():
     STR_angle = jnp.array(data["steer_angle"])
     theta = jnp.array(data["theta"])
     n_samples   = len(X) # Number of samples to run sensitivity
-    outer_steps = 40   # Outer rollout horizon (can be > cfg.TK)
-    pg_iters    = 10 # Number of projected gradient steps to take on q in each outer iteration
-    lr          = 0.2 # Learning rate for projected gradient step on q
-    index_start = 5
+    outer_steps = 60   # Outer rollout horizon (can be > cfg.TK)
+    pg_iters    = 20 # Number of projected gradient steps to take on q in each outer iteration
+    lr          = 0.1 # Learning rate for projected gradient step on q
+    index_start = 50
     # time_pl = jnp.array(data["time"])
     # plt.plot(time_pl, VY)
     # plt.show()
@@ -140,7 +140,7 @@ def main():
         log['q_lag_next'].append(float(q_new[1]))
         log['q_theta_next'].append(float(q_new[2]))
    
-        with open(f'{data_name}_outer_steps{outer_steps}_pg_iters{pg_iters}_lr{lr}', 'w') as f:
+        with open(f'{data_name}_3_outer_steps{outer_steps}_pg_iters{pg_iters}_lr{lr}', 'w') as f:
             json.dump(log, f)
 
 if __name__ == "__main__":

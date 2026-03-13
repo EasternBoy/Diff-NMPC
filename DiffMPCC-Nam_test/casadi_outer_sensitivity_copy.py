@@ -124,9 +124,9 @@ class CasadiOuterSensitivityMPCC_high_VY:
             y_grid = y_grid[:-1]
             phi_grid = phi_grid[:-1]
 
-        ref_x_fun = ca.interpolant("ref_x_fun_sens", "bspline", [theta_grid], x_grid)
-        ref_y_fun = ca.interpolant("ref_y_fun_sens", "bspline", [theta_grid], y_grid)
-        ref_phi_fun = ca.interpolant("ref_phi_fun_sens", "bspline", [theta_grid], phi_grid)
+        ref_x_fun = ca.interpolant("ref_x_fun_sens", "linear", [theta_grid], x_grid)
+        ref_y_fun = ca.interpolant("ref_y_fun_sens", "linear", [theta_grid], y_grid)
+        ref_phi_fun = ca.interpolant("ref_phi_fun_sens", "linear", [theta_grid], phi_grid)
 
         constraints = []
         lbg = []
@@ -165,16 +165,17 @@ class CasadiOuterSensitivityMPCC_high_VY:
             inner_objective += q[0] * e_c ** 2 + q[1] * e_l ** 2
             # Fixed outer objective to learn q from trajectory quality.
             # Define outer objective as trajectory tracking error, independent of q directly.
-            outer_objective += 0.01*e_c ** 2 + 1*e_l ** 2 # Change by your design
+        # outer_objective += 0.01*e_c[0] ** 2 + 1*e_l[0] ** 2 # Change by your design
             # 
         for t in range(TK):
             inner_objective += -q[2] * vik[t]
             u_aug            = ca.vertcat(uk[0, t], uk[1, t], vik[t])
             inner_objective += ca.mtimes([u_aug.T, self.config.Rk_ca, u_aug])
             # Define outer objective to also include control effort, which can influence the optimal trajectory and thus provide a learning signal for q.
-            outer_objective +=  (5e-4 *uk[0, t] ** 2 + 0.01*uk[1, t] ** 2) # Change by your design
 
-            outer_objective += -400*vik[t]
+        # outer_objective +=  (5e-4 *uk[0, 0] ** 2 + 0.01*uk[1, 0] ** 2) # Change by your design
+
+        outer_objective += -100*xk[2, 1] 
 
         for t in range(TK - 1):
             du_aug = ca.vertcat(uk[0, t + 1] - uk[0, t], uk[1, t + 1] - uk[1, t], vik[t + 1] - vik[t])
@@ -562,9 +563,9 @@ class CasadiOuterSensitivityMPCC_low_VY:
             y_grid = y_grid[:-1]
             phi_grid = phi_grid[:-1]
 
-        ref_x_fun = ca.interpolant("ref_x_fun_sens", "bspline", [theta_grid], x_grid)
-        ref_y_fun = ca.interpolant("ref_y_fun_sens", "bspline", [theta_grid], y_grid)
-        ref_phi_fun = ca.interpolant("ref_phi_fun_sens", "bspline", [theta_grid], phi_grid)
+        ref_x_fun = ca.interpolant("ref_x_fun_sens", "linear", [theta_grid], x_grid)
+        ref_y_fun = ca.interpolant("ref_y_fun_sens", "linear", [theta_grid], y_grid)
+        ref_phi_fun = ca.interpolant("ref_phi_fun_sens", "linear", [theta_grid], phi_grid)
 
         constraints = []
         lbg = []
@@ -610,9 +611,9 @@ class CasadiOuterSensitivityMPCC_low_VY:
             u_aug            = ca.vertcat(uk[0, t], uk[1, t], vik[t])
             inner_objective += ca.mtimes([u_aug.T, self.config.Rk_ca, u_aug])
             # Define outer objective to also include control effort, which can influence the optimal trajectory and thus provide a learning signal for q.
-            outer_objective +=  (5e-4 *uk[0, t] ** 2 + 0.01*uk[1, t] ** 2) # Change by your design
+        outer_objective +=  (5e-4 *uk[0, 0] ** 2 + 0.01*uk[1, 0] ** 2) # Change by your design
 
-            outer_objective += -1e-3*vik[t]
+        outer_objective += -1e-3*vik[0]
 
         for t in range(TK - 1):
             du_aug = ca.vertcat(uk[0, t + 1] - uk[0, t], uk[1, t + 1] - uk[1, t], vik[t + 1] - vik[t])
