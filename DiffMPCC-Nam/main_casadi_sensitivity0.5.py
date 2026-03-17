@@ -18,7 +18,11 @@ def main():
     CasadiOuterSensitivityMPCC_high_VY = cos.CasadiOuterSensitivityMPCC_high_VY
     CasadiOuterSensitivityMPCC_low_VY = cos.CasadiOuterSensitivityMPCC_low_VY
     with open(
+<<<<<<<< HEAD:DiffMPCC-Nam/main_casadi_sensitivity_HPC.py
         "more_data/scale0.25_TK20_log_Oschersleben_full_Vinit_8.0friction0.9",
+========
+        "DiffMPCC-Nam/more_data/scale0.25_TK20_log_Oschersleben_full_Vinit_8.0friction0.5",
+>>>>>>>> 0004926d1ae7fea200718a317275e856f3cb428f:DiffMPCC-Nam/main_casadi_sensitivity0.5.py
         "r",
     ) as f:
         data = json.load(f)
