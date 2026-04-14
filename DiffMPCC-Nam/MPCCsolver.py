@@ -14,7 +14,7 @@ import time
 import json
 
 
-data = pd.read_csv("DiffMPCC-Nam/scale0.25_Oschersleben_waypoints.csv")
+data = pd.read_csv("data/scale0.25_Oschersleben_waypoints.csv")
 df = data[["X", "Y"]].copy()
 
 x = onp.asarray(df["X"].to_numpy(), dtype=float)

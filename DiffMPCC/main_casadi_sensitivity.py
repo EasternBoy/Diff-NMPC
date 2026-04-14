@@ -24,11 +24,11 @@ def main():
             'q_contour_cur': [], 'q_lag_cur': [], 'q_theta_cur': [], 'q_contour_next': [], 'q_lag_next': [], 'q_theta_next': []}
     
     with open(
-        "data/scale0.25_TK20_log_Oschersleben_full_Vinit_8.0friction0.7",
+        "data/scale0.25_TK20_log_Oschersleben_full_Vinit_8.0friction1.0",
         "r",
     ) as f:
         data = json.load(f)
-    data_name = 'Vinit=8.0-friction=0.7'
+    data_name = 'Vinit=8.0-friction=1.0'
 
     cfg = MPCConfigDYN()
     cfg.TK = 20  # Inner MPC horizon

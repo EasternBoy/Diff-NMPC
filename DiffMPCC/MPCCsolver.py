@@ -195,7 +195,7 @@ class MPCConfigDYN:
     MAX_SPEED: float = 50.0  # maximum speed [m/s]
     MIN_SPEED: float = 2.0   # minimum backward speed [m/s]
     MIN_POS_X: float = -jnp.inf  # minimum horizontal direction (x) 
-    MAX_POS_X: float = jnp.inf  # maximum horizontal direction (x) 
+    MAX_POS_X: float =  jnp.inf  # maximum horizontal direction (x) 
     MIN_POS_Y: float = -jnp.inf  # minimum vertical direction (y) 
     MAX_POS_Y: float = jnp.inf  # maximum vertical direction (y) 
     MIN_SPEED_LAT: float = -jnp.inf  # minimum latteral speed (m/s)
@@ -282,13 +282,9 @@ class STMPCCPlannerCasadi:
 
     def clip_output(self, state):
         # state = [x, y, vx, yaw, vy, yaw_rate, steering_angle]
-        vx = ca.fmin(
-             ca.fmax(state[2], self.config.MIN_SPEED),
-             self.config.MAX_SPEED)
+        vx = ca.fmin( ca.fmax(state[2], self.config.MIN_SPEED), self.config.MAX_SPEED)
 
-        steering = ca.fmin(
-                    ca.fmax(state[6], self.config.MIN_STEER),
-                    self.config.MAX_STEER)
+        steering = ca.fmin(ca.fmax(state[6], self.config.MIN_STEER), self.config.MAX_STEER)
 
         return ca.vertcat(
             state[0],   # x
@@ -423,55 +419,56 @@ class STMPCCPlannerCasadi:
 
         return init_sol
     
-        self.n_controls = self.config.NU * self.config.TK
-        self.n_theta    = self.config.TK + 1
-        self.n_vi       = self.config.TK
+        # self.n_controls = self.config.NU * self.config.TK
+        # self.n_theta    = self.config.TK + 1
+        # self.n_vi       = self.config.TK
 
-        # Bounds on decision variables
-        self.lbx = []
-        self.ubx = []
+        # # Bounds on decision variables
+        # self.lbx = []
+        # self.ubx = []
 
-        # State bounds (7 states: x, y, vx, yaw, vy, yaw_rate, steering)
-        # for t in range(self.config.TK + 1):
-        self.lbx.extend([
-            self.config.MIN_POS_X,                    # x
-            self.config.MIN_POS_Y,                    # y
-            self.config.MIN_SPEED,      # vx
-            -jnp.inf,                        # yaw
-            self.config.MIN_SPEED_LAT,                    # vy
-            -jnp.inf,                    # yaw_rate
-            self.config.MIN_STEER       # steering_angle
-        ] * (self.config.TK + 1))
-        self.ubx.extend([
-            self.config.MAX_POS_X,                     # x
-            self.config.MAX_POS_Y,                     # y
-            self.config.MAX_SPEED,      # vx
-            jnp.inf,                # yaw
-            self.config.MAX_SPEED_LAT,                     # vy
-            jnp.inf,                     # yaw_rate
-            self.config.MAX_STEER       # steering_angle
-        ] * (self.config.TK + 1))
+        # # State bounds (7 states: x, y, vx, yaw, vy, yaw_rate, steering)
+        # # for t in range(self.config.TK + 1):
+        # self.lbx.extend([
+        #     self.config.MIN_POS_X,                    # x
+        #     self.config.MIN_POS_Y,                    # y
+        #     self.config.MIN_SPEED,      # vx
+        #     -jnp.inf,                        # yaw
+        #     self.config.MIN_SPEED_LAT,                    # vy
+        #     -jnp.inf,                    # yaw_rate
+        #     self.config.MIN_STEER       # steering_angle
+        # ] * (self.config.TK + 1))
+        # self.ubx.extend([
+        #     self.config.MAX_POS_X,                     # x
+        #     self.config.MAX_POS_Y,                     # y
+        #     self.config.MAX_SPEED,      # vx
+        #     jnp.inf,                # yaw
+        #     self.config.MAX_SPEED_LAT,                     # vy
+        #     jnp.inf,                     # yaw_rate
+        #     self.config.MAX_STEER       # steering_angle
+        # ] * (self.config.TK + 1))
 
-        # Control bounds
-        self.lbx.extend([
-            self.config.MAX_DECEL * self.MASS,  # Fxr
-            -self.config.MAX_STEER_V             # delta_v
-        ] * self.config.TK)
-        self.ubx.extend([
-            self.config.MAX_ACCEL * self.MASS,  # Fxr
-            self.config.MAX_STEER_V              # delta_v
-        ] * self.config.TK)
+        # # Control bounds
+        # self.lbx.extend([
+        #     self.config.MAX_DECEL * self.MASS,  # Fxr
+        #     -self.config.MAX_STEER_V             # delta_v
+        # ] * self.config.TK)
+        # self.ubx.extend([
+        #     self.config.MAX_ACCEL * self.MASS,  # Fxr
+        #     self.config.MAX_STEER_V              # delta_v
+        # ] * self.config.TK)
 
-        self.lbx.extend([self.config.MIN_THETA] * (self.config.TK + 1))
-        self.ubx.extend([self.config.MAX_THETA] * (self.config.TK + 1))
+        # self.lbx.extend([self.config.MIN_THETA] * (self.config.TK + 1))
+        # self.ubx.extend([self.config.MAX_THETA] * (self.config.TK + 1))
 
-        self.lbx.extend([self.config.MIN_VI] * self.config.TK)
-        self.ubx.extend([self.config.MAX_VI] * self.config.TK)
+        # self.lbx.extend([self.config.MIN_VI] * self.config.TK)
+        # self.ubx.extend([self.config.MAX_VI] * self.config.TK)
 
-        self.lbg = lbg
-        self.ubg = ubg
+        # self.lbg = lbg
+        # self.ubg = ubg
 
-        self.init_sol =  onp.zeros((self.n_states + self.n_controls + self.n_theta + self.n_vi), dtype=float)
+        # self.init_sol =  onp.zeros((self.n_states + self.n_controls + self.n_theta + self.n_vi), dtype=float)
+
     def mpc_prob_solve(self, init_state, param, theta0):
         """
         init_state should be [x, y, vx, yaw, vy, yaw_rate, steering_angle] (7 elements)
@@ -651,10 +648,10 @@ class STMPCCPlannerCasadi:
             dx = xk[0, t] - x_ref
             dy = xk[1, t] - y_ref
 
-            dxy = ca.sqrt(dx**2 + dy**2)
+            dxy = dx**2 + dy**2
             constraints.append(dxy)
             lbg.append(0.0)
-            ubg.append(3.0)
+            ubg.append(9.0)
 
             # Contouring error (perpendicular to path)
             e_c = sin_phi_t * dx - cos_phi_t * dy
